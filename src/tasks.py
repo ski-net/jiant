@@ -5,7 +5,7 @@
 - Set all text data as an attribute, task.sentences (List[List[str]])
 - Each task's val_metric should be name_metric, where metric is returned by get_metrics()
 '''
-import os
+import os, math
 import logging as log
 import ipdb as pdb
 
@@ -119,7 +119,7 @@ class RankingTask(Task):
         raise NotImplementedError
 
 
-class LanguageModelingTask(SequenceGenerationTask):
+class LanguageModelingTask(Task):
     ''' Generic language modeling task '''
 
     def __init__(self, name):
@@ -131,7 +131,7 @@ class LanguageModelingTask(SequenceGenerationTask):
 
     def get_metrics(self, reset=False):
         '''Get metrics specific to the task'''
-        ppl = self.scorer1.get_metric(reset)
+        ppl = math.exp(self.scorer1.get_metric(reset))
         return {'perplexity': ppl}
 
 

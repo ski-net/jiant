@@ -268,6 +268,8 @@ class MultiTaskModel(nn.Module):
             out = self._seq_gen_forward(batch, task)
         elif isinstance(task, RankingTask):
             out = self._ranking_forward(batch, task)
+        elif isinstance(task, LanguageModelingTask):
+            out = self._lm_forward(batch, task)
 
         else:
             raise ValueError("Task-specific components not found!")
@@ -367,6 +369,25 @@ class MultiTaskModel(nn.Module):
         if 'targs' in batch:
             targs = batch['targs']['words'].view(-1)
             out['loss'] = F.cross_entropy(logits, targs, ignore_index=0)  # some pad index
+            task.scorer1(out['loss'].item())
+        return out
+
+    def _lm_forward(self, batch, task):
+        ''' For translation, denoising, maybe language modeling? '''
+        out = {}
+        b_size, seq_len = batch['inputs']['words'].size()
+        sent, sent_mask = self.sent_encoder(batch['inputs'])
+
+        if isinstance(task, LanguageModelingTask):
+            hid2voc = getattr(self, "%s_hid2voc" % task.name)
+            logits = hid2voc(sent)
+        else:
+            pass
+        out['logits'] = logits
+
+        if 'targs' in batch:
+            targs = batch['targs']['words']
+            out['loss'] = util.sequence_cross_entropy_with_logits(logits, targs, sent_mask.squeeze())
             task.scorer1(out['loss'].item())
         return out
 

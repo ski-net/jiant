@@ -21,7 +21,7 @@ from tasks import SingleClassificationTask, PairClassificationTask, \
     MultiNLISlateTask, MultiNLIGovernmentTask, MultiNLITravelTask, \
     MultiNLITelephoneTask, QQPTask, RTETask, \
     QNLITask, SNLITask, SSTTask, STSBTask, WNLITask, \
-    LanguageModelingTask, WikiTextLMTask
+    LanguageModelingTask, WikiTextLMTask, BWBLMTask
 
 NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'cola': (CoLATask, 'CoLA/'),
@@ -38,7 +38,8 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'rte': (RTETask, 'RTE/'),
              'snli': (SNLITask, 'SNLI/'),
              'wnli': (WNLITask, 'WNLI/'),
-             'wiki': (WikiTextLMTask, 'WikiText/')
+             'lm-wiki': (WikiTextLMTask, 'WikiText/'), 
+             'lm-bwb': (BWBLMTask, 'BWBLM/')
              }
 
 

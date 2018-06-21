@@ -73,6 +73,7 @@ class RNNEncoder(Model):
             - sent_enc (torch.FloatTensor): (b_size, seq_len, d_emb)
         """
         sent_embs = self._highway_layer(self._text_field_embedder(sent))
+
         if self._cove is not None:
             sent_lens = torch.ne(sent['words'], self.pad_idx).long().sum(dim=-1).data
             sent_cove_embs = self._cove(sent['words'], sent_lens)
@@ -94,7 +95,7 @@ class RNNEncoder(Model):
         sent_enc = self._dropout(sent_enc)
 
         sent_mask = sent_mask.unsqueeze(dim=-1)
-        sent_enc.data.masked_fill_(1 - sent_mask.byte().data, -float('inf'))
+        #sent_enc.data.masked_fill_(1 - sent_mask.byte().data, -float('inf'))
         return sent_enc, sent_mask  # .max(dim=1)[0]
 
 
