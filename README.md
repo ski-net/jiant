@@ -13,6 +13,9 @@ conda env create -f environment.yml
 
 To activate the environment run ``source activate jiant``, and to deactivate run ``source deactivate``
 
+To use [fastText](https://github.com/facebookresearch/fastText) models and embeddings, download the [pretrained vectors](https://fasttext.cc/docs/en/english-vectors.html) or the trained English [model](https://fasttext.cc/docs/en/pretrained-vectors.html) (note: 9.6G).
+fastText will also need to be built in the jiant environment following [these instructions](https://github.com/facebookresearch/fastText#building-fasttext-for-python).
+
 ## Downloading data
 
 The repo contains a convenience python script for downloading all GLUE data and standard splits.
@@ -74,6 +77,17 @@ Note: The current training procedure is task-agnostic: we randomly sample a task
 
 ## Pretrained Embeddings
 
+### FastText
+
+To set up fastText, follow the instructions [here](https://github.com/facebookresearch/fastText) (specifically "Building fastText for Python").
+To use fastText, set the flag ``--word_embs fastText``
+If you get a segmentation fault running PyTorch and fastText (Sam, Alex), don't panic. You can also use pretrained vectors.
+
+### ELMo
+
+We use the ELMo implementation provided by [AllenNLP](https://github.com/allenai/allennlp/blob/master/tutorials/how_to/elmo.md).
+To use ELMo, set ``--elmo`` to 1. To use ELMo without GloVe, additionally set ``--elmo_no_glove`` to 1.
+
 ### GloVe
 
 Many of our models make use of [GloVe pretrained word embeddings](https://nlp.stanford.edu/projects/glove/), in particular the 300-dimensional, 840B version.
@@ -84,15 +98,6 @@ To learn embeddings from scratch, set ``--glove`` to 0.
 
 We use the CoVe implementation provided [here](https://github.com/salesforce/cove).
 To use CoVe, clone the repo and fill in ``PATH_TO_COVE`` in ``src/models.py`` and set ``--cove`` to 1.
-
-### ELMo
-
-We use the ELMo implementation provided by [AllenNLP](https://github.com/allenai/allennlp/blob/master/tutorials/how_to/elmo.md).
-To use ELMo, set ``--elmo`` to 1. To use ELMo without GloVe, additionally set ``--elmo_no_glove`` to 1.
-
-### FastText
-
-TODO.
 
 ## Getting Help
 
