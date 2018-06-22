@@ -46,7 +46,7 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'snli': (SNLITask, 'SNLI/'),
              'wnli': (WNLITask, 'WNLI/'),
              'lm-wiki': (WikiTextLMTask, 'WikiText/'), 
-             'lm-bwb': (BWBLMTask, 'BWBLM/')
+             'lm-bwb': (BWBLMTask, 'BWBLM/'), 
              'pdtb': (PDTBTask, 'PDTB/')
              }
 
@@ -366,9 +366,15 @@ def process_lm_task_split(split, indexers, args):
             st = 1
     _len = len(input_strings)
     _batchN = _len / _batchSize
+    if (_len % _batchSize > 0):
+        _batchN += 1
     for idx in range(0, _len):
         offset = _getBatchOffset(idx)
-        input_field = TextField(input_strings[offset], indexers)
-        output_field = TextField(output_strings[offset], indexers)
+        if offset < _len:
+            input_field = TextField(input_strings[offset], indexers)
+            output_field = TextField(output_strings[offset], indexers)
+        else:
+            input_field = TextField([], indexers)
+            output_field = TextField([], indexers)
         instances.append(Instance({'inputs': input_field, 'targs': output_field}))
     return instances

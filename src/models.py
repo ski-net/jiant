@@ -166,7 +166,7 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
             module = build_regressor(task, d_sent * 4, args)
             setattr(model, '%s_mdl' % task.name, module)
         elif isinstance(task, LanguageModelingTask):
-            hid2voc = build_lm(task, d_sent, args)
+            hid2voc = build_lm(task, d_sent, vocab, args)
             setattr(model, '%s_hid2voc' % task.name, hid2voc)
         elif isinstance(task, SequenceGenerationTask):
             decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
@@ -252,9 +252,10 @@ def build_regressor(task, d_inp, args):
     return regressor
 
 
-def build_lm(task, d_inp, args):
+def build_lm(task, d_inp, vocab, args):
     ''' Build LM components (just map hidden states to vocab logits) '''
-    hid2voc = nn.Linear(d_inp, args.max_word_v_size)
+    num_classes = vocab.get_vocab_size("tokens")
+    hid2voc = nn.Linear(d_inp, num_classes)
     return hid2voc
 
 

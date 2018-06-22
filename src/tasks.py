@@ -143,19 +143,19 @@ class WikiTextLMTask(LanguageModelingTask):
         self.sentences = self.train_data_text + self.val_data_text
 
     def load_data(self, path, max_seq_len):
-        tr_data = self.load_txt(os.path.join(path, "wiki.train.txt"), max_seq_len)
-        val_data = self.load_txt(os.path.join(path, "wiki.valid.txt"), max_seq_len)
-        te_data = self.load_txt(os.path.join(path, "wiki.test.txt"), max_seq_len)
+        tr_data = self.load_txt(os.path.join(path, "wiki.train.txt"))
+        val_data = self.load_txt(os.path.join(path, "wiki.valid.txt"))
+        te_data = self.load_txt(os.path.join(path, "wiki.test.txt"))
         self.train_data_text = tr_data
         self.val_data_text = val_data
         self.test_data_text = te_data
         log.info("\tFinished loading WikiText")
 
-    def load_txt(self, path, max_seq_len):
+    def load_txt(self, path):
         data = []
         with open(path) as txt_fh:
             for row in txt_fh:
-                toks = row.strip().split()[:max_seq_len]
+                toks = row.strip().split()
                 if not toks:
                     continue
                 data.append(['<sos>'] + toks)
@@ -168,9 +168,9 @@ class BWBLMTask(WikiTextLMTask):
         self.sentences = self.train_data_text + self.val_data_text
 
     def load_data(self, path, max_seq_len):
-        tr_data = self.load_txt(os.path.join(path, "bwb.train.txt"), max_seq_len)
-        val_data = self.load_txt(os.path.join(path, "bwb.heldout.txt"), max_seq_len)
-        te_data = self.load_txt(os.path.join(path, "bwb.test.txt"), max_seq_len)
+        tr_data = self.load_txt(os.path.join(path, "bwb.train.txt"))
+        val_data = self.load_txt(os.path.join(path, "bwb.heldout.txt"))
+        te_data = self.load_txt(os.path.join(path, "bwb.test.txt"))
         self.train_data_text = tr_data
         self.val_data_text = val_data
         self.test_data_text = te_data
