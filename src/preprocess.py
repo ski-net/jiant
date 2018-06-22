@@ -11,12 +11,13 @@ import torch
 
 from allennlp.data import Instance, Vocabulary, Token
 from allennlp.data.fields import TextField, LabelField
-from allennlp.data.token_indexers import SingleIdTokenIndexer, ELMoTokenCharactersIndexer
+from allennlp.data.token_indexers import SingleIdTokenIndexer, ELMoTokenCharactersIndexer, \
+                                            TokenCharactersIndexer
 from allennlp_mods.numeric_field import NumericField
 
 try:
     import fastText
-except:
+except BaseException:
     log.info("fastText library not found!")
 
 import _pickle as pkl
@@ -27,7 +28,7 @@ from tasks import SingleClassificationTask, PairClassificationTask, \
     MultiNLISlateTask, MultiNLIGovernmentTask, MultiNLITravelTask, \
     MultiNLITelephoneTask, QQPTask, RTETask, \
     QNLITask, SNLITask, SSTTask, STSBTask, WNLITask, \
-    LanguageModelingTask, WikiTextLMTask, BWBLMTask
+    LanguageModelingTask, WikiTextLMTask, BWBLMTask, PDTBTask
 
 NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'cola': (CoLATask, 'CoLA/'),
@@ -46,6 +47,7 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'wnli': (WNLITask, 'WNLI/'),
              'lm-wiki': (WikiTextLMTask, 'WikiText/'), 
              'lm-bwb': (BWBLMTask, 'BWBLM/')
+             'pdtb': (PDTBTask, 'PDTB/')
              }
 
 
@@ -63,14 +65,14 @@ def build_tasks(args):
                   args.data_dir, bool(not args.reload_tasks))
 
     # 2 + 3) build / load vocab and word vectors
-    max_v_sizes = {'word': args.max_word_v_size}
+    max_v_sizes = {'word': args.max_word_v_size, 'char': args.max_char_v_size}
     token_indexer = {}
+    if not args.word_embs == 'none':
+        token_indexer["words"] = SingleIdTokenIndexer()
     if args.elmo:
         token_indexer["elmo"] = ELMoTokenCharactersIndexer("elmo")
-        if not args.elmo_no_glove:
-            token_indexer["words"] = SingleIdTokenIndexer()
-    else:
-        token_indexer["words"] = SingleIdTokenIndexer()
+    if args.char_embs:
+        token_indexer["chars"] = TokenCharactersIndexer("chars")
 
     # Load vocab and associated word embeddings
     vocab_path = os.path.join(args.exp_dir, 'vocab')
@@ -80,20 +82,21 @@ def build_tasks(args):
         log.info("\tLoaded vocab from %s", vocab_path)
     else:
         log.info("\tBuilding vocab from scratch")
-        word2freq = get_words(tasks)
-        vocab = get_vocab(word2freq, max_v_sizes)
+        word2freq, char2freq = get_words(tasks)
+        vocab = get_vocab(word2freq, char2freq, max_v_sizes)
         vocab.save_to_files(vocab_path)
         log.info("\tSaved vocab to %s", vocab_path)
-        del word2freq
-    log.info("\tFinished building vocab. Using %d words", vocab.get_vocab_size('tokens'))
+        del word2freq, char2freq
+    log.info("\tFinished building vocab. Using %d words, %d chars.",
+             vocab.get_vocab_size('tokens'), vocab.get_vocab_size("chars"))
     if not args.reload_vocab and os.path.exists(emb_file):
         word_embs = pkl.load(open(emb_file, 'rb'))
     else:
         log.info("\tBuilding embeddings from scratch")
         if args.fastText:
-            word_embs, _ = get_fastText_embeddings(vocab, args.fastText_embs_file, args.d_word,
-                                                   model_file=args.fastText_model_file)
-            log.info(f'\tNo pickling')
+            word_embs, _ = get_fastText_model(vocab, args.d_word,
+                                              model_file=args.fastText_model_file)
+            log.info("\tNo pickling")
         else:
             word_embs = get_embeddings(vocab, args.word_embs_file, args.d_word)
             pkl.dump(word_embs, open(emb_file, 'wb'))
@@ -170,12 +173,14 @@ def get_words(tasks):
     Get all words for all tasks for all splits for all sentences
     Return dictionary mapping words to frequencies.
     '''
-    word2freq = defaultdict(int)
+    word2freq, char2freq = defaultdict(int), defaultdict(int)
 
     def count_sentence(sentence):
         '''Update counts for words in the sentence'''
         for word in sentence:
             word2freq[word] += 1
+            for char in list(word):
+                char2freq[char] += 1
         return
 
     for task in tasks:
@@ -183,17 +188,22 @@ def get_words(tasks):
             count_sentence(sentence)
 
     log.info("\tFinished counting words")
-    return word2freq
+    return word2freq, char2freq
 
 
-def get_vocab(word2freq, max_v_sizes):
+def get_vocab(word2freq, char2freq, max_v_sizes):
     '''Build vocabulary'''
-    vocab = Vocabulary(counter=None, max_vocab_size=max_v_sizes['word'])
+    vocab = Vocabulary(counter=None, max_vocab_size=max_v_sizes)
+
     words_by_freq = [(word, freq) for word, freq in word2freq.items()]
     words_by_freq.sort(key=lambda x: x[1], reverse=True)
     for word, _ in words_by_freq[:max_v_sizes['word']]:
         vocab.add_token_to_namespace(word, 'tokens')
-    log.info("\tFinished building vocab. Using %d words", vocab.get_vocab_size('tokens'))
+
+    chars_by_freq = [(char, freq) for char, freq in char2freq.items()]
+    chars_by_freq.sort(key=lambda x: x[1], reverse=True)
+    for char, _ in chars_by_freq[:max_v_sizes['char']]:
+        vocab.add_token_to_namespace(char, 'chars')
     return vocab
 
 
@@ -213,7 +223,7 @@ def get_embeddings(vocab, vec_file, d_word):
     '''Get embeddings for the words in vocab'''
     word_v_size, unk_idx = vocab.get_vocab_size('tokens'), vocab.get_token_index(vocab._oov_token)
     embeddings = np.random.randn(word_v_size, d_word)
-    with open(vec_file) as vec_fh:
+    with io.open(vec_file, 'r', encoding='utf-8', newline='\n', errors='ignore') as vec_fh:
         for line in vec_fh:
             word, vec = line.split(' ', 1)
             idx = vocab.get_token_index(word)
@@ -224,7 +234,8 @@ def get_embeddings(vocab, vec_file, d_word):
     log.info("\tFinished loading embeddings")
     return embeddings
 
-def get_fastText_embeddings(vocab, vec_file, d_word, model_file=None):
+
+def get_fastText_model(vocab, d_word, model_file=None):
     '''
     Same interface as get_embeddings except for fastText. Note that if the path to the model
     is provided, the embeddings will rely on that model instead.
@@ -233,30 +244,19 @@ def get_fastText_embeddings(vocab, vec_file, d_word, model_file=None):
     '''
     word_v_size, unk_idx = vocab.get_vocab_size('tokens'), vocab.get_token_index(vocab._oov_token)
     embeddings = np.random.randn(word_v_size, d_word)
-    if model_file is None:
-        fin = io.open(vec_file, 'r', encoding='utf-8', newline='\n', errors='ignore')
-        for line in fin:
-            word, vec = line.rstrip().split(' ', 1)
-            idx = vocab.get_token_index(word)
-            if idx != unk_idx:
-                embeddings[idx] = np.array(list(map(float, vec.split())))
-        embeddings[vocab.get_token_index(vocab._padding_token)] = 0.
-        embeddings = torch.FloatTensor(embeddings)
-        log.info("\tFinished loading pretrained fastText embeddings")
-        return embeddings, None
-    else:
-        model = fastText.FastText.load_model(model_file)
-        special_tokens = [vocab._padding_token, vocab._oov_token]
-        # We can also just check if idx >= 2
-        for idx in range(word_v_size):
-            word = vocab.get_token_from_index(idx)
-            if word in special_tokens:
-                continue
-            embeddings[idx] = model.get_word_vector(word)
-        embeddings[vocab.get_token_index(vocab._padding_token)] = 0.
-        embeddings = torch.FloatTensor(embeddings)
-        log.info("\tFinished loading pretrained fastText model and embeddings")
-        return embeddings, model
+    model = fastText.FastText.load_model(model_file)
+    special_tokens = [vocab._padding_token, vocab._oov_token]
+    # We can also just check if idx >= 2
+    for idx in range(word_v_size):
+        word = vocab.get_token_from_index(idx)
+        if word in special_tokens:
+            continue
+        embeddings[idx] = model.get_word_vector(word)
+    embeddings[vocab.get_token_index(vocab._padding_token)] = 0.
+    embeddings = torch.FloatTensor(embeddings)
+    log.info("\tFinished loading pretrained fastText model and embeddings")
+    return embeddings, model
+
 
 def process_task(task, token_indexer, vocab, args=None):
     '''

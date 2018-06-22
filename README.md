@@ -13,9 +13,6 @@ conda env create -f environment.yml
 
 To activate the environment run ``source activate jiant``, and to deactivate run ``source deactivate``
 
-To use [fastText](https://github.com/facebookresearch/fastText) models and embeddings, download the [pretrained vectors](https://fasttext.cc/docs/en/english-vectors.html) or the trained English [model](https://fasttext.cc/docs/en/pretrained-vectors.html) (note: 9.6G).
-fastText will also need to be built in the jiant environment following [these instructions](https://github.com/facebookresearch/fastText#building-fasttext-for-python).
-
 ## Downloading data
 
 The repo contains a convenience python script for downloading all GLUE data and standard splits.
@@ -37,10 +34,12 @@ Because preprocessing is expensive (particularly for ELMo), we often want to run
 - exp2 (e.g. training and evaluating on WMT and all the GLUE tasks)
     - [...]
 
-You should also be sure to set ``--data_dir`` and  ``--word_embs_file`` to point to the directories containing the data (e.g. the output of the ``download_glue_data`` script and word embeddings (see later sections) respectively.
+You should also be sure to set ``--data_dir`` and  ``--word_embs_file`` to point to the directories containing the data (e.g. the output of the ``download_glue_data`` script and word embeddings (see later sections) respectively).
 
 To force rereading and reloading of the tasks, perhaps because you changed the format or preprocessing of a task, use the flag ``--reload_tasks 1``.
 To force rebuilding of the vocabulary, perhaps because you want to include vocabulary for more tasks, use the flag ``--reload_vocab 1``.
+
+If you are using the experiment scripts, you should also put a file ``user_config.sh`` in the top level directory containing paths specific to your machine.
 
 ```
 python main.py --data_dir $DATA_DIR --exp_dir $EXP_DIR --run_dir $RUN_DIR --train_tasks all --word_embs_file $PATH_TO_VECS
@@ -79,9 +78,13 @@ Note: The current training procedure is task-agnostic: we randomly sample a task
 
 ### FastText
 
-To set up fastText, follow the instructions [here](https://github.com/facebookresearch/fastText) (specifically "Building fastText for Python").
-To use fastText, set the flag ``--word_embs fastText``
-If you get a segmentation fault running PyTorch and fastText (Sam, Alex), don't panic. You can also use pretrained vectors.
+To use fastText, we can either use the pretrained vectors or pretrained model. The former will have OOV terms while the latter will not, so using the latter is preferred.
+To use the pretrained model, follow the instructions [here](https://github.com/facebookresearch/fastText) (specifically "Building fastText for Python") to setup the fastText package, then download the trained English [model](https://fasttext.cc/docs/en/pretrained-vectors.html) (note: 9.6G).
+fastText will also need to be built in the jiant environment following [these instructions](https://github.com/facebookresearch/fastText#building-fasttext-for-python).
+To activate fastText model within our framework, set the flag ``--fastText 1``
+If you get a segmentation fault running PyTorch and fastText (Sam, Alex), don't panic; use the pretrained vectors.
+
+Download the pretrained vectors located [here](https://fasttext.cc/docs/en/english-vectors.html), preferrably the 300-dimensional Common Crawl vectors. Set the ``word_emb_file`` to point to the .vec file.
 
 ### ELMo
 
@@ -98,6 +101,13 @@ To learn embeddings from scratch, set ``--glove`` to 0.
 
 We use the CoVe implementation provided [here](https://github.com/salesforce/cove).
 To use CoVe, clone the repo and fill in ``PATH_TO_COVE`` in ``src/models.py`` and set ``--cove`` to 1.
+
+## Annoying AllenNLP Things
+
+To turn off the verbosity, you'll need to go in your AllenNLP location and create or turn on a ``quiet`` option, e.g. in ``allennlp/common/params.py``, line 186 set ``quiet=True``.
+Other common and verbose locations include ``allennlp/nn/initializers.py`` (many calls to ``logger``) and ``allennlp/common/params.py`` (`pop()`` will print param values often).
+
+To avoid needing to reconstruct vocabulary switching from using character embeddings <> not using character embeddings, using ELMo <> not using ELMo, [TODO]
 
 ## Getting Help
 
