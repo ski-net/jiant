@@ -104,7 +104,7 @@ def build_tasks(args):
             log.info("\tLoaded indexed data for %s from %s", task.name, preproc_file)
         else:
             log.info("\tIndexing task %s from scratch", task.name)
-            process_task(task, token_indexer, vocab)
+            process_task(task, token_indexer, vocab, args)
             del_field_tokens(task)
             preproc[task.name] = (task.train_data, task.val_data, task.test_data)
             save_preproc = 1
@@ -215,7 +215,7 @@ def get_embeddings(vocab, vec_file, d_word):
     return embeddings
 
 
-def process_task(task, token_indexer, vocab):
+def process_task(task, token_indexer, vocab, args=None):
     '''
     Convert a task's splits into AllenNLP fields then index the splits using vocab.
     Different tasks have different formats and fields, so process_task routes tasks
@@ -233,7 +233,7 @@ def process_task(task, token_indexer, vocab):
             split = process_single_pair_task_split(split_text, token_indexer, is_pair=True,
                                                    classification=False)
         elif isinstance(task, LanguageModelingTask):
-            split = process_lm_task_split(split_text, token_indexer)
+            split = process_lm_task_split(split_text, token_indexer, args)
         elif isinstance(task, SequenceGenerationTask):
             pass
         elif isinstance(task, RankingTask):
@@ -291,9 +291,41 @@ def process_single_pair_task_split(split, indexers, is_pair=True, classification
     return instances  # DatasetReader(instances) #Batch(instances) #Dataset(instances)
 
 
-def process_lm_task_split(split, indexers):
+def process_lm_task_split(split, indexers, args):
+    _batchSize = args.batch_size
+    _tokens_per_instance = args.max_seq_len
+
+    def _getBatchOffset(idx: int):
+        return int( int(idx / _batchSize) + (idx % _batchSize) * _batchN )
+
     ''' Process a language modeling split '''
-    inputs = [TextField(list(map(Token, sent[:-1])), token_indexers=indexers) for sent in split]
-    targs = [TextField(list(map(Token, sent[1:])), token_indexers=indexers) for sent in split]
-    instances = [Instance({"inputs": inp, "targs": targ}) for (inp, targ) in zip(inputs, targs)]
+    #inputs = [TextField(list(map(Token, sent[:-1])), token_indexers=indexers) for sent in split]
+    #targs = [TextField(list(map(Token, sent[1:])), token_indexers=indexers) for sent in split]
+    #instances = [Instance({"inputs": inp, "targs": targ}) for (inp, targ) in zip(inputs, targs)]
+    #return instances
+    input_strings = [[]]
+    output_strings = [[]]
+    sentidx = 0
+    st = 1
+    instances = []
+    sent = list(map(Token, split[sentidx]))
+    while sentidx < len(split):
+        sent = list(map(Token, split[sentidx]))
+        if len(input_strings[-1]) == _tokens_per_instance:
+            input_strings.append([])
+            output_strings.append([])
+        end = min(_tokens_per_instance - len(input_strings[-1]) + st, len(sent))
+        input_strings[-1] += sent[st-1:end-1]
+        output_strings[-1] += sent[st:end]
+        st = end
+        if end == len(sent):
+            sentidx += 1
+            st = 1
+    _len = len(input_strings)
+    _batchN = _len / _batchSize
+    for idx in range(0, _len):
+        offset = _getBatchOffset(idx)
+        input_field = TextField(input_strings[offset], indexers)
+        output_field = TextField(output_strings[offset], indexers)
+        instances.append(Instance({'inputs': input_field, 'targs': output_field}))
     return instances

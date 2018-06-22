@@ -43,13 +43,21 @@ def build_model(args, vocab, pretrained_embs, tasks):
         sent_encoder = BoWSentEncoder(vocab, embedder)
         d_sent = d_emb + (args.elmo and args.deep_elmo) * 1024
     elif args.sent_enc == 'rnn':
-        sent_rnn = s2s_e.by_name('lstm').from_params(
-            Params({'input_size': d_emb, 'hidden_size': args.d_hid,
-                    'num_layers': args.n_layers_enc, 'bidirectional': True}))
+        if isinstance(tasks, LanguageModelingTask):
+            sent_rnn = s2s_e.by_name('lstm').from_params(
+                Params({'input_size': d_emb, 'hidden_size': args.d_hid,
+                        'num_layers': args.n_layers_enc, 'bidirectional': False}))
+            sent_rnn.stateful = True
+            d_sent = args.d_hid + (args.elmo and args.deep_elmo) * 1024
+        else:
+            sent_rnn = s2s_e.by_name('lstm').from_params(
+                Params({'input_size': d_emb, 'hidden_size': args.d_hid,
+                        'num_layers': args.n_layers_enc, 'bidirectional': True}))
+            d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
+        
         sent_encoder = RNNEncoder(vocab, embedder, args.n_layers_highway,
                                   sent_rnn, dropout=args.dropout,
                                   cove_layer=cove_emb, elmo_layer=elmo)
-        d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
 
     # Build model and classifiers
     model = MultiTaskModel(args, sent_encoder)
