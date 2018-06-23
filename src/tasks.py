@@ -5,9 +5,10 @@
 - Set all text data as an attribute, task.sentences (List[List[str]])
 - Each task's val_metric should be name_metric, where metric is returned by get_metrics()
 '''
-import os, math
+import os
+import math
 import logging as log
-import ipdb as pdb
+# import ipdb as pdb
 
 from allennlp.training.metrics import CategoricalAccuracy, F1Measure, Average
 
@@ -131,8 +132,8 @@ class LanguageModelingTask(Task):
 
     def get_metrics(self, reset=False):
         '''Get metrics specific to the task'''
-        ppl = math.exp(self.scorer1.get_metric(reset))
-        return {'perplexity': ppl}
+        nll = self.scorer1.get_metric(reset)
+        return {'perplexity': math.exp(nll)}
 
 
 class WikiTextLMTask(LanguageModelingTask):

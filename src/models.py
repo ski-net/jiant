@@ -165,7 +165,7 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
             module = build_regressor(task, d_sent * 4, args)
             setattr(model, '%s_mdl' % task.name, module)
         elif isinstance(task, LanguageModelingTask):
-            hid2voc = build_lm(task, d_sent, vocab, args)
+            hid2voc = build_lm(task, d_sent / 2, args) # separate fwd + bwd
             setattr(model, '%s_hid2voc' % task.name, hid2voc)
         elif isinstance(task, SequenceGenerationTask):
             decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
@@ -186,12 +186,12 @@ def build_classifier(task, d_inp, args):
         classifier = nn.Linear(d_inp, task.n_classes)
     elif cls_type == 'mlp':
         classifier = nn.Sequential(nn.Dropout(p=dropout), nn.Linear(d_inp, d_hid),
-                                   nn.Tanh(), nn.Dropout(p=dropout),
+                                   nn.Tanh(), nn.LayerNorm(d_hid), nn.Dropout(p=dropout),
                                    nn.Linear(d_hid, task.n_classes))
     elif cls_type == 'fancy_mlp':
         classifier = nn.Sequential(nn.Dropout(p=dropout), nn.Linear(d_inp, d_hid),
-                                   nn.Tanh(), nn.Dropout(p=dropout),
-                                   nn.Linear(d_hid, d_hid), nn.Tanh(),
+                                   nn.Tanh(), nn.LayerNorm(d_hid), nn.Dropout(p=dropout),
+                                   nn.Linear(d_hid, d_hid), nn.Tanh(), nn.LayerNorm(d_hid),
                                    nn.Dropout(p=dropout), nn.Linear(d_hid, task.n_classes))
     else:
         raise ValueError("Classifier type not found!")
@@ -241,12 +241,12 @@ def build_regressor(task, d_inp, args):
         regressor = nn.Linear(d_inp, 1)
     elif cls_type == 'mlp':
         regressor = nn.Sequential(nn.Dropout(p=dropout), nn.Linear(d_inp, d_hid),
-                                  nn.Tanh(), nn.Dropout(p=dropout),
+                                  nn.Tanh(), nn.LayerNorm(d_hid), nn.Dropout(p=dropout),
                                   nn.Linear(d_hid, 1))
     elif cls_type == 'fancy_mlp':
         regressor = nn.Sequential(nn.Dropout(p=dropout), nn.Linear(d_inp, d_hid),
-                                  nn.Tanh(), nn.Dropout(p=dropout),
-                                  nn.Linear(d_hid, d_hid), nn.Tanh(),
+                                  nn.Tanh(),nn.LayerNorm(d_hid),  nn.Dropout(p=dropout),
+                                  nn.Linear(d_hid, d_hid), nn.Tanh(), nn.LayerNorm(d_hid),
                                   nn.Dropout(p=dropout), nn.Linear(d_hid, 1))
     return regressor
 
@@ -404,14 +404,20 @@ class MultiTaskModel(nn.Module):
 
         if isinstance(task, LanguageModelingTask):
             hid2voc = getattr(self, "%s_hid2voc" % task.name)
-            logits = hid2voc(sent)
-            logits = logits.view(b_size * seq_len, -1)
+            sent = sent.masked_fill(1 - sent_mask.byte(), 0) # avoid NaNs
+             # split sent reps by fwd, bwd
+            sent_fwd, sent_bwd = sent.split(int(sent.size(-1) / 2), dim=-1)
+            logits_fwd = hid2voc(sent_fwd).view(b_size * seq_len, -1)
+            logits_bwd = hid2voc(sent_bwd).view(b_size * seq_len, -1)
+            logits = torch.cat([logits_fwd, logits_bwd], dim=0).view(2 * b_size * seq_len, -1)
         else:
             pass
         out['logits'] = logits
 
         if 'targs' in batch:
             targs = batch['targs']['words'].view(-1)
+            if isinstance(task, LanguageModelingTask):
+                targs = targs.repeat(2)
             pad_idx = self.vocab.get_token_index(self.vocab._padding_token)
             out['loss'] = F.cross_entropy(logits, targs, ignore_index=pad_idx)
             task.scorer1(out['loss'].item())

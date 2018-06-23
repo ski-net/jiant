@@ -33,9 +33,9 @@ FORCE_LOAD_EPOCH=-1
 
 train_tasks='wiki'
 eval_tasks='none'
-max_seq_len=40
+max_seq_len=100
 
-VOCAB_SIZE=30000
+VOCAB_SIZE=100000
 word_embs=fastText
 char_embs=0
 fastText=0
@@ -44,7 +44,7 @@ ELMO=0
 deep_elmo=0
 COVE=0
 
-sent_enc="transformer"
+sent_enc="rnn"
 CLASSIFIER=mlp
 d_hid_cls=512
 d_hid=512
@@ -64,7 +64,7 @@ WEIGHT_DECAY=0.0
 SCHED_THRESH=0.0
 BATCH_SIZE=64
 BPP_BASE=1
-VAL_INTERVAL=10
+VAL_INTERVAL=100
 MAX_VALS=100
 TASK_ORDERING="random"
 weighting_method="uniform"

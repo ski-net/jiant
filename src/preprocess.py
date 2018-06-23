@@ -5,14 +5,14 @@ import io
 import os
 import logging as log
 from collections import defaultdict
-import ipdb as pdb
+# import ipdb as pdb
 import numpy as np
 import torch
 
 from allennlp.data import Instance, Vocabulary, Token
 from allennlp.data.fields import TextField, LabelField
 from allennlp.data.token_indexers import SingleIdTokenIndexer, ELMoTokenCharactersIndexer, \
-                                            TokenCharactersIndexer
+    TokenCharactersIndexer
 from allennlp_mods.numeric_field import NumericField
 
 try:
@@ -87,8 +87,11 @@ def build_tasks(args):
         vocab.save_to_files(vocab_path)
         log.info("\tSaved vocab to %s", vocab_path)
         del word2freq, char2freq
+    word_v_size = vocab.get_vocab_size('tokens')
+    char_v_size = vocab.get_vocab_size('chars')
     log.info("\tFinished building vocab. Using %d words, %d chars.",
-             vocab.get_vocab_size('tokens'), vocab.get_vocab_size("chars"))
+             word_v_size, char_v_size)
+    args.max_word_v_size, args.max_char_v_size = word_v_size, char_v_size
     if not args.reload_vocab and os.path.exists(emb_file):
         word_embs = pkl.load(open(emb_file, 'rb'))
     else:
