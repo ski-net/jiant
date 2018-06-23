@@ -39,13 +39,12 @@ def build_model(args, vocab, pretrained_embs, tasks):
 
     # Build embeddings.
     d_emb, embedder, elmo, cove_emb = build_embeddings(args, vocab, pretrained_embs)
-
     # Build single sentence encoder: the main component of interest
     if args.sent_enc == 'bow':
         sent_encoder = BoWSentEncoder(vocab, embedder)
         d_sent = d_emb + (args.elmo and args.deep_elmo) * 1024
     elif args.sent_enc == 'rnn':
-        if isinstance(tasks, LanguageModelingTask):
+        if isinstance(tasks[0], LanguageModelingTask):
             sent_rnn = s2s_e.by_name('lstm').from_params(
                 Params({'input_size': d_emb, 'hidden_size': args.d_hid,
                         'num_layers': args.n_layers_enc, 'bidirectional': False}))
@@ -60,7 +59,7 @@ def build_model(args, vocab, pretrained_embs, tasks):
         sent_encoder = RNNEncoder(vocab, embedder, args.n_layers_highway,
                                   sent_rnn, dropout=args.dropout,
                                   cove_layer=cove_emb, elmo_layer=elmo)
-        d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
+
     elif args.sent_enc == 'transformer':
         transformer = StackedSelfAttentionEncoder(input_dim=d_emb,
                                                   hidden_dim=args.d_hid,
