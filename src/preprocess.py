@@ -383,5 +383,4 @@ def process_lm_task_split(split, indexers, args):
             input_field = TextField(sos_emptyline, indexers)
             output_field = TextField(eos_emptyline, indexers)
         instances.append(Instance({'inputs': input_field, 'targs': output_field}))
-    outf.close()
     return instances

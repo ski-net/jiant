@@ -49,7 +49,7 @@ def build_model(args, vocab, pretrained_embs, tasks):
                 Params({'input_size': d_emb, 'hidden_size': args.d_hid,
                         'num_layers': args.n_layers_enc, 'bidirectional': False}))
             sent_rnn.stateful = True
-            d_sent = args.d_hid + (args.elmo and args.deep_elmo) * 1024
+            d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
         else:
             sent_rnn = s2s_e.by_name('lstm').from_params(
                 Params({'input_size': d_emb, 'hidden_size': args.d_hid,
@@ -165,7 +165,7 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
             module = build_regressor(task, d_sent * 4, args)
             setattr(model, '%s_mdl' % task.name, module)
         elif isinstance(task, LanguageModelingTask):
-            hid2voc = build_lm(task, d_sent / 2, args) # separate fwd + bwd
+            hid2voc = build_lm(task, d_sent / 2, vocab, args) # separate fwd + bwd
             setattr(model, '%s_hid2voc' % task.name, hid2voc)
         elif isinstance(task, SequenceGenerationTask):
             decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
