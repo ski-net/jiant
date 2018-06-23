@@ -353,7 +353,6 @@ def process_lm_task_split(split, indexers, args):
     instances = []
     sent = list(map(Token, split[sentidx]))
     while sentidx < len(split):
-        sent = list(map(Token, split[sentidx]))
         if len(input_strings[-1]) == _tokens_per_instance:
             input_strings.append([])
             output_strings.append([])
@@ -363,11 +362,13 @@ def process_lm_task_split(split, indexers, args):
         st = end
         if end == len(sent):
             sentidx += 1
+            if sentidx < len(split): sent = list(map(Token, split[sentidx]))
             st = 1
     _len = len(input_strings)
-    _batchN = _len / _batchSize
+    _batchN = int(_len / _batchSize)
     if (_len % _batchSize > 0):
         _batchN += 1
+    log.info('\tTotal {} sents with lenth {}, total {} batches'.format(_len, _tokens_per_instance, _batchN))
     for idx in range(0, _len):
         offset = _getBatchOffset(idx)
         if offset < _len:
