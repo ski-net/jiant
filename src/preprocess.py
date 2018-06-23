@@ -276,7 +276,7 @@ def process_task(task, token_indexer, vocab, args=None):
             split = process_single_pair_task_split(split_text, token_indexer, is_pair=True,
                                                    classification=False)
         elif isinstance(task, LanguageModelingTask):
-            split = process_lm_task_split(split_text, token_indexer, vocab, args)
+            split = process_lm_task_split(split_text, token_indexer, args)
         elif isinstance(task, SequenceGenerationTask):
             pass
         elif isinstance(task, RankingTask):
@@ -334,7 +334,7 @@ def process_single_pair_task_split(split, indexers, is_pair=True, classification
     return instances  # DatasetReader(instances) #Batch(instances) #Dataset(instances)
 
 
-def process_lm_task_split(split, indexers, vocab, args):
+def process_lm_task_split(split, indexers, args):
     _batchSize = args.batch_size
     _tokens_per_instance = args.max_seq_len
 
@@ -369,8 +369,8 @@ def process_lm_task_split(split, indexers, vocab, args):
     if (_len % _batchSize > 0):
         _batchN += 1
     log.info('\tTotal {} sents with lenth {}, total {} batches'.format(_len, _tokens_per_instance, _batchN))
-    sos_emptyline = list(map(Token, [vocab.get_token_index('<sos>')]))
-    eos_emptyline = list(map(Token, [vocab.get_token_index('.')]))
+    sos_emptyline = list(map(Token, ['<sos>']))
+    eos_emptyline = list(map(Token, ['</s>']))
     for idx in range(0, _len):
         offset = _getBatchOffset(idx)
         if offset < _len:
@@ -380,4 +380,5 @@ def process_lm_task_split(split, indexers, vocab, args):
             input_field = TextField(sos_emptyline, indexers)
             output_field = TextField(eos_emptyline, indexers)
         instances.append(Instance({'inputs': input_field, 'targs': output_field}))
+    outf.close()
     return instances
