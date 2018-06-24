@@ -379,8 +379,12 @@ def process_lm_task_split(split, indexers, args):
         if offset < _len:
             input_field = TextField(input_strings[offset], indexers)
             output_field = TextField(output_strings[offset], indexers)
+            bwd_input_field = TextField(output_strings[offset][::-1], indexers)
+            bwd_output_field = TextField(input_strings[offset][::-1], indexers)
         else:
             input_field = TextField(sos_emptyline, indexers)
             output_field = TextField(eos_emptyline, indexers)
-        instances.append(Instance({'inputs': input_field, 'targs': output_field}))
+            bwd_input_field = TextField(eos_emptyline, indexers)
+            bwd_output_field = TextField(sos_emptyline, indexers)
+        instances.append(Instance({'inputs': input_field, 'targs': output_field, 'bwd_inputs': bwd_input_field, 'bwd_targs': bwd_output_field}))
     return instances

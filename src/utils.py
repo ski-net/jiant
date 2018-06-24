@@ -8,8 +8,7 @@ import random
 import logging
 import codecs
 import nltk
-#from nltk.tokenize.moses import MosesTokenizer
-from mosestokenizer import MosesTokenizer
+from nltk.tokenize.moses import MosesTokenizer
 
 import numpy
 import torch

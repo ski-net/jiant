@@ -27,7 +27,7 @@ from tasks import STSBTask, CoLATask, SSTTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask
 from modules import RNNEncoder, BoWSentEncoder, \
-    AttnPairEncoder, SimplePairEncoder
+    AttnPairEncoder, SimplePairEncoder, BiLMEncoder
 
 # Elmo stuff
 ELMO_OPT_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"  # pylint: disable=line-too-long
@@ -49,6 +49,12 @@ def build_model(args, vocab, pretrained_embs, tasks):
                 Params({'input_size': d_emb, 'hidden_size': args.d_hid,
                         'num_layers': args.n_layers_enc, 'bidirectional': False}))
             sent_rnn.stateful = True
+            sent_bwd_rnn = s2s_e.by_name('lstm').from_params(
+                Params({'input_size': d_emb, 'hidden_size': args.d_hid,
+                        'num_layers': args.n_layers_enc, 'bidirectional': False}))
+            sent_encoder = BiLMEncoder(vocab, embedder, args.n_layers_highway,
+                                      sent_rnn, sent_bwd_rnn, dropout=args.dropout,
+                                      cove_layer=cove_emb, elmo_layer=elmo)
             d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
         else:
             sent_rnn = s2s_e.by_name('lstm').from_params(
@@ -56,7 +62,7 @@ def build_model(args, vocab, pretrained_embs, tasks):
                         'num_layers': args.n_layers_enc, 'bidirectional': True}))
             d_sent = 2 * args.d_hid + (args.elmo and args.deep_elmo) * 1024
         
-        sent_encoder = RNNEncoder(vocab, embedder, args.n_layers_highway,
+            sent_encoder = RNNEncoder(vocab, embedder, args.n_layers_highway,
                                   sent_rnn, dropout=args.dropout,
                                   cove_layer=cove_emb, elmo_layer=elmo)
 
@@ -427,18 +433,21 @@ class MultiTaskModel(nn.Module):
         ''' For translation, denoising, maybe language modeling? '''
         out = {}
         b_size, seq_len = batch['inputs']['words'].size()
-        sent, sent_mask = self.sent_encoder(batch['inputs'])
+        sent, sent_mask = self.sent_encoder(batch['inputs'], batch['bwd_inputs'])
 
-        if isinstance(task, LanguageModelingTask):
-            hid2voc = getattr(self, "%s_hid2voc" % task.name)
-            logits = hid2voc(sent)
-        else:
-            pass
+        #sent = sent.masked_fill(1 - sent_mask.byte(), 0) # avoid NaNs
+        hid2voc = getattr(self, "%s_hid2voc" % task.name)
+        logits_fwd = hid2voc(sent[:,:seq_len,:])
+        logits_bwd = hid2voc(sent[:,seq_len:,:])
+        logits = torch.cat([logits_fwd, logits_bwd], dim=1)
         out['logits'] = logits
 
         if 'targs' in batch:
             targs = batch['targs']['words']
-            out['loss'] = util.sequence_cross_entropy_with_logits(logits, targs, sent_mask.squeeze())
+            out['fwd_loss'] = util.sequence_cross_entropy_with_logits(logits[:,:seq_len,:].contiguous(), targs, sent_mask[:,:seq_len])
+            bwd_targs = batch['bwd_targs']['words']
+            out['bwd_loss'] = util.sequence_cross_entropy_with_logits(logits[:,seq_len:,:].contiguous(), bwd_targs, sent_mask[:,seq_len:])
+            out['loss'] = (out['fwd_loss'] + out['bwd_loss']) / 2
             task.scorer1(out['loss'].item())
         return out
 

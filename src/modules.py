@@ -251,3 +251,60 @@ class AttnPairEncoder(Model):
         return cls(vocab=vocab, attention_similarity_function=similarity_function,
                    modeling_layer=modeling_layer, dropout=dropout,
                    mask_lstms=mask_lstms, initializer=initializer)
+
+class BiLMEncoder(RNNEncoder):
+    ''' Given a sequence of tokens, embed each token and pass thru an LSTM ; LM has to seprate two directions'''
+
+    def __init__(self, vocab, text_field_embedder, num_highway_layers, phrase_layer, bwd_phrase_layer, 
+                 cove_layer=None, elmo_layer=None, dropout=0.2, mask_lstms=True,
+                 initializer=InitializerApplicator()):
+        super(BiLMEncoder, self).__init__(vocab, text_field_embedder, num_highway_layers, phrase_layer, 
+                                          cove_layer, elmo_layer, dropout, mask_lstms,
+                                          initializer)
+        self._bwd_phrase_layer = bwd_phrase_layer
+        self.output_dim += self._bwd_phrase_layer.get_output_dim()
+        initializer(self)
+
+    def forward(self, fwd_sent, bwd_sent):
+        # pylint: disable=arguments-differ
+        """
+        Args:
+            - sent (Dict[str, torch.LongTensor]): From a ``TextField``.
+
+        Returns:
+            - sent_enc (torch.FloatTensor): (b_size, seq_len, d_emb)
+        """
+        fwd_sent_embs = self._highway_layer(self._text_field_embedder(fwd_sent))
+        bwd_sent_embs = self._highway_layer(self._text_field_embedder(bwd_sent))
+        sent_embs = torch.cat([fwd_sent_embs, bwd_sent_embs], 1)
+
+        if self._cove is not None:
+            sent_lens = torch.ne(sent['words'], self.pad_idx).long().sum(dim=-1).data
+            sent_cove_embs = self._cove(sent['words'], sent_lens)
+            sent_embs = torch.cat([sent_embs, sent_cove_embs], dim=-1)
+        if self._elmo is not None:
+            elmo_embs = self._elmo(sent['elmo'])
+            if "words" in sent:
+                sent_embs = torch.cat([sent_embs, elmo_embs['elmo_representations'][0]], dim=-1)
+            else:
+                sent_embs = elmo_embs['elmo_representations'][0]
+        sent_embs = self._dropout(sent_embs)
+        
+        fwd_sent_mask = util.get_text_field_mask(fwd_sent).float()
+        bwd_sent_mask = util.get_text_field_mask(bwd_sent).float()
+        sent_mask = torch.cat([fwd_sent_mask, bwd_sent_mask], 1)
+
+        sent_lstm_mask = sent_mask if self._mask_lstms else None
+
+        seq_len = fwd_sent_embs.size()[1] # sent_embs.size(): batchsize x timesteps x embdim
+        fwd_sent_enc = self._phrase_layer(sent_embs[:,:seq_len,:], sent_lstm_mask[:,:seq_len])
+        bwd_sent_enc = self._bwd_phrase_layer(sent_embs[:,seq_len:,:], sent_lstm_mask[:,seq_len:])
+        sent_enc = torch.cat([fwd_sent_enc, bwd_sent_enc], 1)
+
+        if self._elmo is not None and len(elmo_embs['elmo_representations']) > 1:
+            sent_enc = torch.cat([sent_enc, elmo_embs['elmo_representations'][1]], dim=-1)
+        sent_enc = self._dropout(sent_enc)
+
+        #sent_mask = sent_mask.unsqueeze(dim=-1)
+        #sent_enc.data.masked_fill_(1 - sent_mask.byte().data, -float('inf'))
+        return sent_enc, sent_mask  # .max(dim=1)[0]
