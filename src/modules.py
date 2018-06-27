@@ -198,8 +198,9 @@ class BoWSentEncoder(Model):
 
 class Classifier(Model):
     ''' Classifier with a linear projection before pooling '''
-    def  __init__(self, vocab, d_inp, n_classes, cls_type='mlp', dropout=.2,
-                  d_proj=512, d_hid=512):
+
+    def __init__(self, vocab, d_inp, n_classes, cls_type='mlp', dropout=.2,
+                 d_proj=512, d_hid=512):
         super(Classifier, self).__init__(vocab)
         self.project = nn.Linear(d_inp, d_proj)
         if cls_type == 'log_reg':
@@ -208,7 +209,7 @@ class Classifier(Model):
             classifier = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_inp, d_hid),
                                        nn.Tanh(), nn.LayerNorm(d_hid),
                                        nn.Dropout(dropout), nn.Linear(d_hid, n_classes))
-        elif cls_type == 'fancy_mlp': # what they did in Infersent
+        elif cls_type == 'fancy_mlp':  # what they did in Infersent
             classifier = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_inp, d_hid),
                                        nn.Tanh(), nn.LayerNorm(d_hid), nn.Dropout(dropout),
                                        nn.Linear(d_hid, d_hid), nn.Tanh(),
@@ -227,10 +228,9 @@ class Classifier(Model):
         return logits
 
 
-
-
 class SimplePairEncoder(Model):
     ''' Given two sentence vectors u and v, model the pair as [u; v; |u-v|; u * v] '''
+
     def __init__(self, vocab, combine_method='max'):
         super(SimplePairEncoder, self).__init__(vocab)
         self.combine_method = combine_method

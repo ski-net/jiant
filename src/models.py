@@ -244,6 +244,7 @@ def build_classifier(task, d_inp, args):
 
     return classifier
 
+
 def build_pair_encoder(d_inp, vocab, args):
     if args.pair_enc == 'simple':
         pair_encoder = SimplePairEncoder(vocab, args.sent_combine_method)
@@ -261,6 +262,7 @@ def build_pair_encoder(d_inp, vocab, args):
     else:
         raise ValueError("Pair classifier type not found!")
     return pair_encoder, d_inp_classifier
+
 
 def build_pair_classifier(task, d_inp, model, vocab, args):
     ''' Build a pair classifier, shared if necessary '''
