@@ -14,6 +14,9 @@ from allennlp.data.token_indexers import SingleIdTokenIndexer, ELMoTokenCharacte
     TokenCharactersIndexer
 from allennlp_mods.numeric_field import NumericField
 
+# DEBUG
+import memory_profiler
+
 try:
     import fastText
 except BaseException:
@@ -59,7 +62,7 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
 SOS_TOK, EOS_TOK = "<SOS>", "<EOS>"
 SPECIALS = [SOS_TOK, EOS_TOK]
 
-
+@memory_profiler.profile
 def build_tasks(args):
     '''Main logic for preparing tasks, doing so by
     1) creating / loading the tasks
@@ -286,6 +289,7 @@ def get_fastText_model(vocab, d_word, model_file=None):
     return embeddings, model
 
 
+@memory_profiler.profile
 def process_task(task, token_indexer, vocab):
     '''
     Convert a task's splits into AllenNLP fields then index the splits using vocab.
