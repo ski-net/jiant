@@ -1,9 +1,9 @@
 '''Train a multi-task model using AllenNLP '''
 import argparse
+import glob
 import json
 import os
 import random
-import glob
 import sys
 import time
 
