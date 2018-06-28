@@ -1,5 +1,5 @@
 """ Trainer """
-
+import ipdb as pdb
 import os
 import re
 import glob
@@ -21,63 +21,92 @@ from allennlp.training.optimizers import Optimizer
 from utils import device_mapping
 from utils import assert_for_log
 
-def build_trainer(args, model, max_vals):
-    '''Build a trainer'''
-    iterator = BasicIterator(args.batch_size)
+
+def build_trainer_params(args, task, max_vals, val_interval):
+    ''' Build trainer parameters, possibly loading task specific parameters '''
+    def get_task_attr(attr_name):
+        return getattr(args, "%s_%s" % (task, attr_name)) if \
+            hasattr(args, "%s_%s" % (task, attr_name)) else \
+            getattr(args, attr_name)
+    params = {}
+    train_opts = ['optimizer', 'lr', 'batch_size', 'lr_decay_factor',
+                  'task_patience', 'patience', 'scheduler_threshold']
+    # we want to pass to the build_train()
+    extra_opts = ['sent_enc', 'd_hid', 'cuda', 'max_grad_norm', 'min_lr', 'no_tqdm']
+    for attr in train_opts:
+        params[attr] = get_task_attr(attr)
+    for attr in extra_opts:
+        params[attr] = getattr(args, attr)
+    params['max_vals'] = getattr(args, "%s_max_vals" % task) if \
+        hasattr(args, "%s_max_vals" % task) else max_vals
+    params['val_interval'] = getattr(args, "%s_val_interval" % task) if \
+        hasattr(args, "%s_val_interval" % task) else val_interval
+
+    return Params(params)
+
+
+def build_trainer(params, model, run_dir):
+    '''Build a trainer.
+
+    Parameters
+    ----------
+    args: A trainer config object.
+    model: A module with trainable parameters.
+    max_vals: The upper bound on training steps, specified in number of validation runs.
+
+    Returns
+    -------
+    A trainer object, a trainer config object, an optimizer config object,
+        and a scheduler config object.
+    '''
+    iterator = BasicIterator(params['batch_size'])
     # iterator = BucketIterator(sorting_keys=[("sentence1", "num_tokens")],
-    #                          batch_size=args.batch_size)
+    #                          batch_size=params['batch_size'])
 
-    if args.optimizer == 'adam':
+    if params['optimizer'] == 'adam':
         # AMSGrad is a flag variant of Adam, not its own object.
-        opt_params = Params({'type': args.optimizer, 'lr': args.lr,
-                             'weight_decay': 1e-5, 'amsgrad': True})
+        opt_params = Params({'type': params['optimizer'], 'lr': params['lr'],
+                             'weight_decay': 0, 'amsgrad': True})
     else:
-        opt_params = Params({'type': args.optimizer, 'lr': args.lr, 'weight_decay': 1e-5})
+        opt_params = Params({'type': params['optimizer'], 'lr': params['lr'],
+                             'weight_decay': 0})
 
-    if 'transformer' in args.sent_enc:
+    if 'transformer' in params['sent_enc']:
         schd_params = Params({'type': 'noam',
-                              'model_size': args.d_hid,
+                              'model_size': params['d_hid'],
                               'warmup_steps': 4000,
                               'factor': 1.0})
     else:
         schd_params = Params({'type': 'reduce_on_plateau',
                               'mode': 'max',
-                              'factor': args.lr_decay_factor,
-                              'patience': args.task_patience,
-                              'threshold': args.scheduler_threshold,
+                              'factor': params['lr_decay_factor'],
+                              'patience': params['task_patience'],
+                              'threshold': params['scheduler_threshold'],
                               'threshold_mode': 'abs',
                               'verbose': True})
 
-    train_params = Params({'num_epochs': args.n_epochs, 'cuda_device': args.cuda,
-                           'patience': args.patience, 'grad_norm': args.max_grad_norm,
-                           'max_vals': max_vals,
-                           'lr_decay': .99, 'min_lr': args.min_lr, 'no_tqdm': args.no_tqdm})
-    trainer = SamplingMultiTaskTrainer.from_params(model, args.run_dir, iterator,
+    train_params = Params({'cuda_device': params['cuda'],
+                           'patience': params['patience'],
+                           'grad_norm': params['max_grad_norm'],
+                           'val_interval': params['val_interval'],
+                           'max_vals': params['max_vals'],
+                           'lr_decay': .99, 'min_lr': params['min_lr'],
+                           'no_tqdm': params['no_tqdm']})
+    trainer = SamplingMultiTaskTrainer.from_params(model, run_dir, iterator,
                                                    copy.deepcopy(train_params))
     return trainer, train_params, opt_params, schd_params
 
 
-def get_task_order(method, tasks, iterator):
-    '''Get order to train tasks on'''
-    if method == 'given':
-        task_order = range(len(tasks))
-    elif 'random' in method:
-        task_order = [i for i in range(len(tasks))]
-        random.shuffle(task_order)
-    else:
-        task_sizes = [(idx, iterator.get_num_batches(task.train_data))
-                      for idx, task in enumerate(tasks)]
-        task_sizes.sort(key=lambda x: x[1], reverse=bool(method == 'large_to_small'))
-        task_order = [task_idx for task_idx, _ in task_sizes]
-    return task_order
-
-
 class SamplingMultiTaskTrainer:
-    def __init__(self, model, iterator, patience=2, num_epochs=20, max_vals=50,
+    def __init__(self, model, iterator, patience=2, val_interval=100, max_vals=50,
                  serialization_dir=None, cuda_device=-1,
                  grad_norm=None, grad_clipping=None, lr_decay=None, min_lr=None,
-                 no_tqdm=False):
-        """ Parameters
+                 no_tqdm=False, keep_all_checkpoints=False):
+        """
+        The training coordinator. Unusually complicated to handle MTL with tasks of
+        diverse sizes.
+
+        Parameters
         ----------
         model : ``Model``, required.
             An AllenNLP model to be optimized. Pytorch Modules can also be optimized if
@@ -95,8 +124,6 @@ class SamplingMultiTaskTrainer:
             and whether to serialize an ``is_best`` model each epoch. The metric name
             must be prepended with either "+" or "-", which specifies whether the metric
             is an increasing or decreasing function.
-        num_epochs , optional (default = 20)
-            Number of training epochs.
         serialization_dir , optional (default=None)
             Path to directory for saving and loading model files. Models will not be saved if
             this parameter is not passed.
@@ -121,19 +148,22 @@ class SamplingMultiTaskTrainer:
             cause problems with log files from, e.g., a docker image running on kubernetes.  If
             ``no_tqdm`` is ``True``, we will not use tqdm, and instead log batch statistics using
             ``log.info``, outputting a line at most every 10 seconds.
+        keep_all_checkpoints : If set, keep checkpoints from every validation. Otherwise, keep only
+            best and (if different) most recent.
         """
         self._model = model
         self._iterator = iterator
 
         self._patience = patience
-        self._num_epochs = num_epochs
         self._max_vals = max_vals
+        self._val_interval = val_interval
         self._serialization_dir = serialization_dir
         self._cuda_device = cuda_device
         self._grad_norm = grad_norm
         self._grad_clipping = grad_clipping
         self._lr_decay = lr_decay
         self._min_lr = min_lr
+        self._keep_all_checkpoints = keep_all_checkpoints
 
         self._task_infos = None
         self._metric_infos = None
@@ -173,7 +203,8 @@ class SamplingMultiTaskTrainer:
         for task in tasks:
             task_info = task_infos[task.name]
             tr_generator = iterator(task.train_data, num_epochs=None, cuda_device=self._cuda_device)
-            task_info['n_tr_batches'] = iterator.get_num_batches(task.train_data)
+            task_info['n_tr_batches'] = task.n_tr_examples / iterator._batch_size
+            task_info['n_val_batches'] = task.n_val_examples / iterator._batch_size
             task_info['tr_generator'] = tr_generator
             task_info['loss'] = 0.0
             task_info['total_batches_trained'] = 0
@@ -193,10 +224,32 @@ class SamplingMultiTaskTrainer:
         return task_infos, metric_infos
 
     def train(self, tasks, stop_metric,
-              validation_interval, n_batches_per_pass,
+              n_batches_per_pass,
               weighting_method, scaling_method,
               train_params, optimizer_params, scheduler_params,
-              shared_optimizer=0, load_model=1, phase="main"):
+              shared_optimizer=1, load_model=1, phase="main"):
+        """
+        The main training loop.
+
+        Parameters
+        ----------
+        tasks: A list of task objects to train on.
+        stop_metric: The metric to use for early stopping.
+        validation_interval: How many passes between evaluations.
+        n_batches_per_pass: How many training steps per task per pass.
+        weighting_method: How to sample which task to use.
+        scaling_method: How to scale gradients.
+        train_params: Trainer config object.
+        optimizer_params: Optimizer config object.
+        scheduler_params: Scheduler config object.
+        shared_optimizer: Use a single optimizer object for all tasks in MTL. Recommended.
+        load_model: Whether to restore and continue training if a checkpoint is found.
+        phase: Usually 'main' or 'eval'.
+
+        Returns
+        -------
+        Validation results
+        """
 
         if weighting_method == 'uniform':
             log.info("Sampling tasks uniformly")
@@ -211,7 +264,7 @@ class SamplingMultiTaskTrainer:
             log.info("Scaling losses to the smallest task")
         elif scaling_method == 'unit':
             log.info("Dividing losses by number of training batches")
-
+        validation_interval = self._val_interval
         iterator = self._iterator
         task_infos, metric_infos = self._setup_training(tasks, train_params, optimizer_params,
                                                         scheduler_params, iterator)
@@ -232,11 +285,12 @@ class SamplingMultiTaskTrainer:
                 log.info("Loaded model from checkpoint. Starting at pass %d.", n_pass)
             else:
                 log.info("Not loading.")
-                checkpoint_pattern = os.path.join(self._serialization_dir, "*_{}_*.th".format(phase))
+                checkpoint_pattern = os.path.join(
+                    self._serialization_dir, "*_{}_*.th".format(phase))
                 assert_for_log(len(glob.glob(checkpoint_pattern)) == 0,
-                    "There are existing checkpoints here which will be overwritten. " \
-                    "Use -m or LOAD_MODEL to load the checkpoints instead. " \
-                    "If you don't want them, delete them or change your experimnent name.")
+                               "There are existing checkpoints here which will be overwritten. "
+                               "Use -m or LOAD_MODEL to load the checkpoints instead. "
+                               "If you don't want them, delete them or change your experimnent name.")
 
         if self._grad_clipping is not None:  # pylint: disable=invalid-unary-operand-type
             def clip_function(grad): return grad.clamp(-self._grad_clipping, self._grad_clipping)
@@ -272,8 +326,8 @@ class SamplingMultiTaskTrainer:
                 total_batches_trained += 1
                 optimizer.zero_grad()
                 output_dict = self._forward(batch, task=task, for_training=True)
-                assert_for_log("loss" in output_dict, 
-                    "Model must return a dict containing a 'loss' key")
+                assert_for_log("loss" in output_dict,
+                               "Model must return a dict containing a 'loss' key")
                 loss = output_dict["loss"]  # optionally scale loss
                 if scaling_method == 'unit' and weighting_method == 'proportional':
                     loss /= task_info['n_tr_batches']
@@ -415,13 +469,13 @@ class SamplingMultiTaskTrainer:
                     n_examples += batch['labels'].size()[0]
                 elif 'targs' in batch:
                     n_examples += batch['targs']['words'].nelement()
-            assert batch_num == n_val_batches
+            #assert batch_num == n_val_batches
 
             # Get task validation metrics and store in all_val_metrics
             task_metrics = task.get_metrics(reset=True)
             for name, value in task_metrics.items():
                 all_val_metrics["%s_%s" % (task.name, name)] = value
-            all_val_metrics["%s_loss" % task.name] /= n_val_batches
+            all_val_metrics["%s_loss" % task.name] /= batch_num # n_val_batches
             all_val_metrics["micro_avg"] += \
                 all_val_metrics[task.val_metric] * n_examples
             all_val_metrics["macro_avg"] += \
@@ -524,23 +578,31 @@ class SamplingMultiTaskTrainer:
         # pylint: disable=no-self-use
         return ', '.join(["%s: %.4f" % (name, value) for name, value in metrics.items()]) + " ||"
 
-    def _unmark_previous_best(self, phase="main"):
+    def _unmark_previous_best(self, phase, epoch):
         marked_best = glob.glob(
             os.path.join(self._serialization_dir, "*_state_{}_epoch_*.best_macro.th".format(phase)))
         for file in marked_best:
-            os.rename(file, re.sub('%s$' % ".best_macro.th", ".th", file))
+            # Skip the just-written checkpoint.
+            if "_{}.".format(epoch) not in file:
+                os.rename(file, re.sub('%s$' % ".best_macro.th", ".th", file))
 
-    def _save_checkpoint(self, training_state, phase="main", new_best_macro=False):
+    def _delete_old_checkpoints(self, phase, epoch):
+        candidates = glob.glob(
+            os.path.join(self._serialization_dir, "*_state_{}_epoch_*.th".format(phase)))
+        for file in candidates:
+            # Skip the best, because we'll need it.
+            # Skip the just-written checkpoint.
+            if ".best_macro" not in file and "_{}.".format(epoch) not in file:
+                os.remove(file)
+
+    def _save_checkpoint(self, training_state, phase="main", new_best_macro=False, keep_all=False):
         """
         Parameters
         ----------
-        epoch , required.
-            The epoch of training.
-        is_best, optional (default = None)
-            A flag which causes the model weights at the given epoch to
-            be copied to a "best.th" file. The value of this flag should
-            be based on some validation metric computed by your model.
-        TODO: Is there a reason this was removed?
+        training_state: An object containing trainer state (step number, etc.), to be saved.
+        phase: Usually 'main' or 'eval'.
+        new_best_macro: If true, the saved checkpoint will be marked with .best_macro, and
+            potentially used later when switching from main to eval training.
         """
         if not self._serialization_dir:
             raise ConfigurationError("serialization_dir not specified - cannot "
@@ -553,7 +615,6 @@ class SamplingMultiTaskTrainer:
                 "model_state_eval_best.th")
         else:
             if new_best_macro:
-                self._unmark_previous_best(phase)
                 best_str = ".best_macro"
             else:
                 best_str = ""
@@ -621,6 +682,12 @@ class SamplingMultiTaskTrainer:
                     "metric_state_{}_epoch_{}{}.th".format(
                         phase, epoch, best_str)))
         log.info("Saved files to %s", self._serialization_dir)
+
+        if phase != "eval" and new_best_macro:
+            self._unmark_previous_best(phase, epoch)
+
+        if not self._keep_all_checkpoints:
+            self._delete_old_checkpoints(phase, epoch)
 
     def _find_last_checkpoint_suffix(self, search_phases_in_priority_order=['main']):
         """
@@ -712,7 +779,7 @@ class SamplingMultiTaskTrainer:
         ''' Generator trainer from parameters.  '''
 
         patience = params.pop("patience", 2)
-        num_epochs = params.pop("num_epochs", 20)
+        val_interval = params.pop("val_interval", 100)
         max_vals = params.pop("max_vals", 50)
         cuda_device = params.pop("cuda_device", -1)
         grad_norm = params.pop("grad_norm", None)
@@ -720,11 +787,13 @@ class SamplingMultiTaskTrainer:
         lr_decay = params.pop("lr_decay", None)
         min_lr = params.pop("min_lr", None)
         no_tqdm = params.pop("no_tqdm", False)
+        keep_all_checkpoints = params.pop("keep_all_checkpoints", False)
 
         params.assert_empty(cls.__name__)
         return SamplingMultiTaskTrainer(model, iterator, patience=patience,
-                                        num_epochs=num_epochs, max_vals=max_vals,
+                                        val_interval=val_interval, max_vals=max_vals,
                                         serialization_dir=serialization_dir,
                                         cuda_device=cuda_device, grad_norm=grad_norm,
                                         grad_clipping=grad_clipping, lr_decay=lr_decay,
-                                        min_lr=min_lr, no_tqdm=no_tqdm)
+                                        min_lr=min_lr, no_tqdm=no_tqdm,
+                                        keep_all_checkpoints=keep_all_checkpoints)

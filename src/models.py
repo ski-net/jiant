@@ -1,12 +1,15 @@
-'''Core model and functions for building it.
-
-If you are adding a new task, you should [...]'''
+'''Core model and functions for building it.'''
 import sys
+import copy
+import ipdb as pdb
 import logging as log
+import os
 
 import torch
 import torch.nn as nn
+import numpy as np
 import torch.nn.functional as F
+from torch.autograd import Variable
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, mean_squared_error
 
@@ -25,15 +28,24 @@ from tasks import STSBTask, CoLATask, SSTTask, \
     PairClassificationTask, SingleClassificationTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, \
-    PairOrdinalRegressionTask, JOCITask
+    PairOrdinalRegressionTask, JOCITask, WeakGroundedTask, \
+    GroundedTask
 from modules import SentenceEncoder, BoWSentEncoder, \
-    AttnPairEncoder, SimplePairEncoder, MaskedStackedSelfAttentionEncoder, \
+    AttnPairEncoder, MaskedStackedSelfAttentionEncoder, \
     BiLMEncoder, ElmoCharacterEncoder, Classifier, Pooler, \
-    SingleClassifier, PairClassifier
+    SingleClassifier, PairClassifier, CNNEncoder
+from utils import assert_for_log
 
 # Elmo stuff
-ELMO_OPT_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"  # pylint: disable=line-too-long
-ELMO_WEIGHTS_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"  # pylint: disable=line-too-long
+# Look in $ELMO_SRC_DIR (e.g. /usr/share/jsalt/elmo) or download from web
+ELMO_OPT_NAME = "elmo_2x4096_512_2048cnn_2xhighway_options.json"
+ELMO_WEIGHTS_NAME = "elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+ELMO_SRC_DIR = (os.getenv("ELMO_SRC_DIR") or
+                "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/")
+ELMO_OPT_PATH = os.path.join(ELMO_SRC_DIR, ELMO_OPT_NAME)
+ELMO_WEIGHTS_PATH = os.path.join(ELMO_SRC_DIR, ELMO_WEIGHTS_NAME)
+#  ELMO_OPT_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"  # pylint: disable=line-too-long
+#  ELMO_WEIGHTS_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"  # pylint: disable=line-too-long
 
 
 def build_model(args, vocab, pretrained_embs, tasks):
@@ -45,44 +57,30 @@ def build_model(args, vocab, pretrained_embs, tasks):
 
     # Build single sentence encoder: the main component of interest
     # Need special handling for language modeling
+    tfm_params = Params({'input_dim': d_emb, 'hidden_dim': args.d_hid,
+                         'projection_dim': args.d_tproj,
+                         'feedforward_hidden_dim': args.d_ff,
+                         'num_layers': args.n_layers_enc,
+                         'num_attention_heads': args.n_heads})
+    rnn_params = Params({'input_size': d_emb, 'bidirectional': args.bidirectional,
+                         'hidden_size': args.d_hid, 'num_layers': args.n_layers_enc})
+
     if sum([isinstance(task, LanguageModelingTask) for task in tasks]):
         if args.bidirectional:
             if args.sent_enc == 'rnn':
-                fwd = s2s_e.by_name('lstm').from_params(
-                    Params({'input_size': d_emb, 'hidden_size': args.d_hid,
-                            'num_layers': args.n_layers_enc, 'bidirectional': False}))
-                bwd = s2s_e.by_name('lstm').from_params(
-                    Params({'input_size': d_emb, 'hidden_size': args.d_hid,
-                            'num_layers': args.n_layers_enc, 'bidirectional': False}))
+                fwd = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
+                bwd = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
             elif args.sent_enc == 'transformer':
-                fwd = MaskedStackedSelfAttentionEncoder(input_dim=d_emb,
-                                                        hidden_dim=args.d_hid,
-                                                        projection_dim=args.d_tproj,
-                                                        feedforward_hidden_dim=args.d_ff,
-                                                        num_layers=args.n_layers_enc,
-                                                        num_attention_heads=args.n_heads)
-                bwd = MaskedStackedSelfAttentionEncoder(input_dim=d_emb,
-                                                        hidden_dim=args.d_hid,
-                                                        projection_dim=args.d_tproj,
-                                                        feedforward_hidden_dim=args.d_ff,
-                                                        num_layers=args.n_layers_enc,
-                                                        num_attention_heads=args.n_heads)
+                fwd = MaskedStackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
+                bwd = MaskedStackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
             sent_encoder = BiLMEncoder(vocab, embedder, args.n_layers_highway,
                                        fwd, bwd, dropout=args.dropout,
-                                       skip_embs=args.skip_embs,
-                                       cove_layer=cove_emb)
+                                       skip_embs=args.skip_embs, cove_layer=cove_emb)
         else:  # not bidirectional
             if args.sent_enc == 'rnn':
-                fwd = s2s_e.by_name('lstm').from_params(
-                    Params({'input_size': d_emb, 'hidden_size': args.d_hid,
-                            'num_layers': args.n_layers_enc, 'bidirectional': False}))
+                fwd = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
             elif args.sent_enc == 'transformer':
-                fwd = MaskedStackedSelfAttentionEncoder(input_dim=d_emb,
-                                                        hidden_dim=args.d_hid,
-                                                        projection_dim=args.d_tproj,
-                                                        feedforward_hidden_dim=args.d_ff,
-                                                        num_layers=args.n_layers_enc,
-                                                        num_attention_heads=args.n_heads)
+                fwd = MaskedStackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
             sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
                                            fwd, skip_embs=args.skip_embs,
                                            dropout=args.dropout, cove_layer=cove_emb)
@@ -90,24 +88,19 @@ def build_model(args, vocab, pretrained_embs, tasks):
         sent_encoder = BoWSentEncoder(vocab, embedder)
         d_sent = d_emb
     elif args.sent_enc == 'rnn':
-        sent_rnn = s2s_e.by_name('lstm').from_params(
-            Params({'input_size': d_emb, 'hidden_size': args.d_hid,
-                    'num_layers': args.n_layers_enc,
-                    'bidirectional': args.bidirectional}))
+        sent_rnn = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
         sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
                                        sent_rnn, skip_embs=args.skip_embs,
                                        dropout=args.dropout, cove_layer=cove_emb)
         d_sent = (1 + args.bidirectional) * args.d_hid
     elif args.sent_enc == 'transformer':
-        transformer = StackedSelfAttentionEncoder(input_dim=d_emb,
-                                                  hidden_dim=args.d_hid,
-                                                  projection_dim=args.d_tproj,
-                                                  feedforward_hidden_dim=args.d_ff,
-                                                  num_layers=args.n_layers_enc,
-                                                  num_attention_heads=args.n_heads)
+        transformer = StackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
         sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
                                        transformer, dropout=args.dropout,
                                        skip_embs=args.skip_embs, cove_layer=cove_emb)
+    else:
+        assert_for_log(False, "No valid sentence encoder specified.")
+
     d_sent += args.skip_embs * d_emb
 
     # Build model and classifiers
@@ -116,6 +109,14 @@ def build_model(args, vocab, pretrained_embs, tasks):
     if args.cuda >= 0:
         model = model.cuda()
     log.info(model)
+    param_count = 0
+    trainable_param_count = 0
+    for name, param in model.named_parameters():
+        param_count += np.prod(param.size())
+        if param.requires_grad:
+            trainable_param_count += np.prod(param.size())         
+    log.info("Total number of parameters: {}".format(param_count))
+    log.info("Number of trainable parameters: {}".format(trainable_param_count))
     return model
 
 
@@ -174,6 +175,9 @@ def build_embeddings(args, vocab, pretrained_embs=None):
 
     # Handle elmo
     if args.elmo:
+        log.info("Loading ELMo from files:")
+        log.info("ELMO_OPT_PATH = %s", ELMO_OPT_PATH)
+        log.info("ELMO_WEIGHTS_PATH = %s", ELMO_WEIGHTS_PATH)
         if args.elmo_chars_only:
             log.info("\tUsing ELMo character CNN only!")
             #elmo_embedder = elmo_embedder._elmo._elmo_lstm._token_embedder
@@ -198,12 +202,14 @@ def build_embeddings(args, vocab, pretrained_embs=None):
 def build_modules(tasks, model, d_sent, vocab, embedder, args):
     ''' Build task-specific components for each task and add them to model '''
     for task in tasks:
+        task_params = get_task_specific_params(args, task.name)
         if isinstance(task, SingleClassificationTask):
-            module = build_single_sentence_module(task, d_sent, args)
+            module = build_single_sentence_module(task, d_sent, task_params)
             setattr(model, '%s_mdl' % task.name, module)
         elif isinstance(task, (PairClassificationTask, PairRegressionTask,
                                PairOrdinalRegressionTask)):
-            module = build_pair_sentence_module(task, d_sent, model, vocab, args)
+            module = build_pair_sentence_module(task, d_sent, model, vocab,
+                                                task_params)
             setattr(model, '%s_mdl' % task.name, module)
         elif isinstance(task, LanguageModelingTask):
             hid2voc = build_lm(task, d_sent, args)
@@ -219,50 +225,72 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
     return
 
 
-def build_single_sentence_module(task, d_inp, args):
+def get_task_specific_params(args, task):
+    params = {}
+
+    def get_task_attr(attr_name):
+        return getattr(args, "%s_%s" % (task, attr_name)) if \
+            hasattr(args, "%s_%s" % (task, attr_name)) else \
+            getattr(args, attr_name)
+
+    params['cls_type'] = get_task_attr("classifier")
+    params['d_hid'] = get_task_attr("classifier_hid_dim")
+    params['d_proj'] = get_task_attr("d_proj")
+    params['shared_pair_attn'] = args.shared_pair_attn
+    if args.shared_pair_attn:
+        params['attn'] = args.pair_attn
+        params['d_hid_attn'] = args.d_hid_attn
+        params['dropout'] = args.classifier_dropout
+    else:
+        params['attn'] = get_task_attr("pair_attn")
+        params['d_hid_attn'] = get_task_attr("d_hid_attn")
+        params['dropout'] = get_task_attr("classifier_dropout")
+
+    return Params(params)
+
+
+def build_single_sentence_module(task, d_inp, params):
     ''' Build a single classifier '''
-    pooler = Pooler.from_params(d_inp, args)
-    classifier = Classifier.from_params(args.d_proj, task.n_classes, args)
+    pooler = Pooler.from_params(d_inp, params['d_proj'])
+    classifier = Classifier.from_params(params['d_proj'], task.n_classes, params)
     return SingleClassifier(pooler, classifier)
 
 
-def build_pair_sentence_module(task, d_inp, model, vocab, args):
+def build_pair_sentence_module(task, d_inp, model, vocab, params):
     ''' Build a pair classifier, shared if necessary '''
 
-    def build_pair_encoder(d_in):
+    def build_pair_attn(d_in, use_attn, d_hid_attn):
         ''' Build the pair model '''
-        if args.pair_enc == 'simple':
-            pair_encoder = SimplePairEncoder(vocab)
-            d_out = 4 * d_in
-        elif args.pair_enc == 'attn':
+        if not use_attn:
+            pair_attn = None
+        else:
             d_inp_model = 2 * d_in
-            d_hid_model = d_inp  # make it as large as the original sentence emb
             modeling_layer = s2s_e.by_name('lstm').from_params(
-                Params({'input_size': d_inp_model, 'hidden_size': d_hid_model,
+                Params({'input_size': d_inp_model, 'hidden_size': d_hid_attn,
                         'num_layers': 1, 'bidirectional': True}))
-            pair_encoder = AttnPairEncoder(vocab, DotProductSimilarity(),
-                                           args.sent_combine_method,
-                                           modeling_layer, dropout=args.dropout)
-            d_out = 4 * d_hid_model
-        else:
-            raise ValueError("Pair classifier type not found!")
-        return pair_encoder, d_out
+            pair_attn = AttnPairEncoder(vocab, modeling_layer,
+                                        dropout=params["dropout"])
+        return pair_attn
 
-    d_proj = args.d_proj
-    pooler = Pooler.from_params(d_inp, args)
-    if args.shared_pair_enc:
-        if not hasattr(model, "pair_encoder"):
-            pair_encoder, d_inp_classifier = build_pair_encoder(d_proj)
-            model.pair_encoder = pair_encoder
-        else:
-            pair_encoder = model.pair_encoder
-            d_inp_classifier = 4 * d_proj if args.pair_enc == 'simple' else 4 * d_proj # not right
+    if params["attn"]:
+        pooler = Pooler.from_params(params["d_hid_attn"], params["d_hid_attn"], project=False)
+        d_out = params["d_hid_attn"] * 2
     else:
-        pair_encoder, d_inp_classifier = build_pair_encoder(d_proj)
+        pooler = Pooler.from_params(d_inp, params["d_proj"], project=True)
+        d_out = params["d_proj"]
+
+    if params["shared_pair_attn"]:
+        if not hasattr(model, "pair_attn"):
+            pair_attn = build_pair_attn(d_inp, params["attn"], params["d_hid_attn"])
+            model.pair_attn = pair_attn
+        else:
+            pair_attn = model.pair_attn
+    else:
+        pair_attn = build_pair_attn(d_inp, params["attn"], params["d_hid_attn"])
 
     n_classes = task.n_classes if hasattr(task, 'n_classes') else 1
-    classifier = Classifier.from_params(d_inp_classifier, n_classes, args)
-    module = PairClassifier(pooler, pair_encoder, classifier)
+    classifier = Classifier.from_params(4 * d_out, n_classes, params)
+    module = PairClassifier(pooler, classifier, pair_attn)
     return module
 
 
@@ -315,6 +343,8 @@ class MultiTaskModel(nn.Module):
             out = self._lm_forward(batch, task)
         elif isinstance(task, SequenceGenerationTask):
             out = self._seq_gen_forward(batch, task)
+        elif isinstance(task, GroundedTask):
+            out = self._grounded_classification_forward(batch, task)
         elif isinstance(task, RankingTask):
             out = self._ranking_forward(batch, task)
 
@@ -360,7 +390,10 @@ class MultiTaskModel(nn.Module):
         if 'labels' in batch:
             labels = batch['labels'].squeeze(-1)
             if isinstance(task, JOCITask):
+                logits = logits.squeeze(-1)
                 out['loss'] = F.mse_loss(logits, labels)
+                logits = logits.data.cpu().numpy()
+                labels = labels.data.cpu().numpy()
                 task.scorer1(mean_squared_error(logits, labels))
                 task.scorer2(spearmanr(logits, labels)[0])
             elif isinstance(task, STSBTask):
@@ -419,6 +452,41 @@ class MultiTaskModel(nn.Module):
         task.scorer1(out['loss'].item())
         return out
 
+    def _grounded_classification_forward(self, batch, task):
+        out = {}; d_1, d_2 = 1024, 2048;
+
+        # embed the sentence, embed the image, map and classify
+        sent_embs, sent_mask = self.sent_encoder(batch['input1'])
+        sent_emb = combine_hidden_states(sent_embs, sent_mask, self.combine_method)
+        image_map = nn.Linear(d_1, d_2); sent_transform = image_map(sent_emb)
+        ids = batch['ids'].squeeze(-1); ids = list(ids.data.numpy());
+        labels = batch['labels'].squeeze(-1); labels = [int(item) for item in labels.data.numpy()]  
+        
+        seq, true = [], []
+        for i in range(len(ids)):
+            img_id, label = ids[i], labels[i]
+            init_emb = task.img_encoder.forward(int(img_id)).data.numpy()[0]
+            seq.append(torch.tensor(init_emb, dtype=torch.float)); true.append(label)
+        img_emb = torch.stack(seq, dim=0);
+        '''
+        cos = nn.SmoothL1Loss()        
+        cos = nn.MSELoss()        
+        cos = nn.L1Loss()
+        out['loss'] = cos(sent_emb, torch.tensor(img_emb, requires_grad=False))
+        '''
+        cos = nn.CosineEmbeddingLoss(); flags = Variable(torch.ones(len(labels)))
+        out['loss'] = cos(torch.tensor(sent_transform, dtype=torch.float), torch.tensor(img_emb, dtype=torch.float), flags)
+        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+        
+        classifier = nn.Linear(len(labels), len(labels))
+        out['logits'] = classifier(sim)
+
+        preds = [1 if item > 0 else 0 for item in logits.data.numpy()]
+        acc = [1 if preds[i] == labels[i] else 0 for i in range(len(labels))]
+        task.scorer1.__call__(np.sum(acc)/len(acc))
+
+        return out
+    
     def _ranking_forward(self, batch, task):
         ''' For caption and image ranking '''
         raise NotImplementedError

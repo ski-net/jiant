@@ -4,6 +4,7 @@ import sys
 import json
 import logging as log
 import h5py
+import ipdb as pdb
 
 import numpy
 import torch
@@ -12,11 +13,17 @@ import torch.nn.functional as F
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
 
+import torch.utils.data
+import torch.utils.data.distributed
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
+
 from allennlp.common import Params
 from allennlp.common.file_utils import cached_path
 from allennlp.common.checks import ConfigurationError
 from allennlp.models.model import Model
-from allennlp.modules import Highway, MatrixAttention
+from allennlp.modules import Highway
+from allennlp.modules.matrix_attention import DotProductMatrixAttention
 from allennlp.modules import Seq2SeqEncoder, SimilarityFunction, TimeDistributed
 from allennlp.nn import util, InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import remove_sentence_boundaries, add_sentence_boundary_token_ids, get_device_of
@@ -33,6 +40,9 @@ from utils import MaskedMultiHeadSelfAttention
 from allennlp.nn.activations import Activation
 from allennlp.nn.util import add_positional_features
 
+from cnns.alexnet import alexnet
+from cnns.resnet import resnet101
+from cnns.inception import inception_v3
 
 class SentenceEncoder(Model):
     ''' Given a sequence of tokens, embed each token and pass thru an LSTM '''
@@ -195,14 +205,17 @@ class BoWSentEncoder(Model):
 
 class Pooler(nn.Module):
     ''' Do pooling, possibly with a projection beforehand '''
-    def  __init__(self, d_inp, project=True, d_proj=512, pool_type='max'):
+
+    def __init__(self, d_inp, project=True, d_proj=512, pool_type='max'):
         super(Pooler, self).__init__()
         self.project = nn.Linear(d_inp, d_proj) if project else lambda x: x
         self.pool_type = pool_type
 
     def forward(self, sequence, mask):
+        if len(mask.size()) < 3:
+            mask = mask.unsqueeze(dim=-1)
         pad_mask = 1 - mask.byte().data
-        if sequence.min().item() != float('-inf'): # this will f up the loss
+        if sequence.min().item() != float('-inf'):  # this will f up the loss
             #log.warn('Negative infinity detected')
             sequence.masked_fill(pad_mask, 0)
         proj_seq = self.project(sequence)
@@ -213,18 +226,20 @@ class Pooler(nn.Module):
         elif self.pool_type == 'mean':
             #proj_seq = proj_seq.masked_fill(pad_mask, 0)
             seq_emb = proj_seq.sum(dim=1) / mask.sum(dim=1)
-        elif  self.pool_type == 'final':
+        elif self.pool_type == 'final':
             idxs = mask.expand_as(proj_seq).sum(dim=1, keepdim=True).long() - 1
             seq_emb = proj_seq.gather(dim=1, index=idxs)
         return seq_emb
 
     @classmethod
-    def from_params(cls, d_inp, args):
-        return cls(d_inp, d_proj=args.d_proj)
+    def from_params(cls, d_inp, d_proj, project=True):
+        return cls(d_inp, d_proj=d_proj, project=project)
+
 
 class Classifier(nn.Module):
     ''' Classifier with a linear projection before pooling '''
-    def  __init__(self, d_inp, n_classes, cls_type='mlp', dropout=.2, d_hid=512):
+
+    def __init__(self, d_inp, n_classes, cls_type='mlp', dropout=.2, d_hid=512):
         super(Classifier, self).__init__()
         if cls_type == 'log_reg':
             classifier = nn.Linear(d_inp, n_classes)
@@ -232,7 +247,7 @@ class Classifier(nn.Module):
             classifier = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_inp, d_hid),
                                        nn.Tanh(), nn.LayerNorm(d_hid),
                                        nn.Dropout(dropout), nn.Linear(d_hid, n_classes))
-        elif cls_type == 'fancy_mlp': # what they did in Infersent
+        elif cls_type == 'fancy_mlp':  # what they did in Infersent
             classifier = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_inp, d_hid),
                                        nn.Tanh(), nn.LayerNorm(d_hid), nn.Dropout(dropout),
                                        nn.Linear(d_hid, d_hid), nn.Tanh(),
@@ -247,12 +262,14 @@ class Classifier(nn.Module):
         return logits
 
     @classmethod
-    def from_params(cls, d_inp, n_classes, args):
-        return cls(d_inp, n_classes, cls_type=args.classifier,
-                   dropout=args.classifier_dropout, d_hid=args.classifier_hid_dim)
+    def from_params(cls, d_inp, n_classes, params):
+        return cls(d_inp, n_classes, cls_type=params["cls_type"],
+                   dropout=params["dropout"], d_hid=params["d_hid"])
+
 
 class SingleClassifier(nn.Module):
     ''' Thin wrapper around a set of modules '''
+
     def __init__(self, pooler, classifier):
         super(SingleClassifier, self).__init__()
         self.pooler = pooler
@@ -263,31 +280,27 @@ class SingleClassifier(nn.Module):
         logits = self.classifier(emb)
         return logits
 
+
 class PairClassifier(nn.Module):
     ''' Thin wrapper around a set of modules '''
-    def __init__(self, pooler, encoder, classifier):
+
+    def __init__(self, pooler, classifier, attn=None):
         super(PairClassifier, self).__init__()
         self.pooler = pooler
-        self.encoder = encoder
         self.classifier = classifier
+        self.attn = attn
 
     def forward(self, s1, s2, mask1, mask2):
+        if len(mask1) > 2:
+            mask1 = mask1.squeeze(-1)
+            mask2 = mask2.squeeze(-1)
+        if self.attn is not None:
+            s1, s2 = self.attn(s1, s2, mask1, mask2)
         emb1 = self.pooler(s1, mask1)
         emb2 = self.pooler(s2, mask2)
-        pair_emb = self.encoder(emb1, emb2, mask1, mask2)
+        pair_emb = torch.cat([emb1, emb2, torch.abs(emb1 - emb2), emb1 * emb2], 1)
         logits = self.classifier(pair_emb)
         return logits
-
-
-class SimplePairEncoder(Model):
-    ''' Given two sentence vectors u and v, model the pair as [u; v; |u-v|; u * v] '''
-    def __init__(self, vocab):
-        super(SimplePairEncoder, self).__init__(vocab)
-
-    def forward(self, sent1, sent2, mask1, mask2):
-        """ See above """
-        return torch.cat([sent1, sent2, torch.abs(sent1 - sent2), sent1 * sent2], 1)
-
 
 
 class AttnPairEncoder(Model):
@@ -318,43 +331,24 @@ class AttnPairEncoder(Model):
         If provided, will be used to calculate the regularization penalty during training.
     """
 
-    def __init__(self, vocab, attention_similarity_function, modeling_layer,
-                 combine_method='max',
-                 dropout=0.2, mask_lstms=True, initializer=InitializerApplicator()):
+    def __init__(self, vocab, modeling_layer, dropout=0.2, mask_lstms=True,
+                 initializer=InitializerApplicator()):
         super(AttnPairEncoder, self).__init__(vocab)
 
-        self._matrix_attention = MatrixAttention(attention_similarity_function)
+        self._matrix_attention = DotProductMatrixAttention()
         self._modeling_layer = modeling_layer
         self.pad_idx = vocab.get_token_index(vocab._padding_token)
-        self.combine_method = combine_method
 
         d_out_model = modeling_layer.get_output_dim()
         self.output_dim = d_out_model
 
-        if dropout > 0:
-            self._dropout = torch.nn.Dropout(p=dropout)
-        else:
-            self._dropout = lambda x: x
+        self._dropout = torch.nn.Dropout(p=dropout) if dropout > 0 else lambda x: x
         self._mask_lstms = mask_lstms
 
         initializer(self)
 
     def forward(self, s1, s2, s1_mask, s2_mask):  # pylint: disable=arguments-differ
-        """
-        Parameters
-        ----------
-        s1 : Dict[str, torch.LongTensor]
-            From a ``TextField``.
-        s2 : Dict[str, torch.LongTensor]
-            From a ``TextField``.
-
-        Returns
-        -------
-        pair_rep : torch.FloatTensor?
-            Tensor representing the final output of the BiDAF model
-            to be plugged into the next module
-
-        """
+        """ """
         # Similarity matrix
         # Shape: (batch_size, s2_length, s1_length)
         similarity_mat = self._matrix_attention(s2, s1)
@@ -377,15 +371,17 @@ class AttnPairEncoder(Model):
 
         modeled_s1 = self._dropout(self._modeling_layer(s1_w_context, s1_mask))
         modeled_s2 = self._dropout(self._modeling_layer(s2_w_context, s2_mask))
+        return modeled_s1, modeled_s2
+
+        '''
         modeled_s1.data.masked_fill_(1 - s1_mask.unsqueeze(dim=-1).byte().data, -float('inf'))
         modeled_s2.data.masked_fill_(1 - s2_mask.unsqueeze(dim=-1).byte().data, -float('inf'))
-        #s1_attn = modeled_s1.max(dim=1)[0]
-        #s2_attn = modeled_s2.max(dim=1)[0]
-        s1_attn = combine_hidden_states(modeled_s1, s1_mask, self.combine_method)
-        s2_attn = combine_hidden_states(modeled_s2, s2_mask, self.combine_method)
+        s1_attn = modeled_s1.max(dim=1)[0]
+        s2_attn = modeled_s2.max(dim=1)[0]
 
         return torch.cat([s1_attn, s2_attn, torch.abs(s1_attn - s2_attn),
                           s1_attn * s2_attn], 1)
+        '''
 
     @classmethod
     def from_params(cls, vocab, params):
@@ -785,3 +781,56 @@ class ElmoCharacterEncoder(torch.nn.Module):
 
             self._projection.weight.requires_grad = self.requires_grad
             self._projection.bias.requires_grad = self.requires_grad
+
+class CNNEncoder(Model):
+    ''' Given an image, get image features from last layer of specified CNN '''
+
+    def __init__(self, model_name, path, model=None):
+        super(CNNEncoder, self).__init__(model_name)
+        self.model_name = model_name
+        self.model = self._load_model(model_name)
+        self.feat_dict = self._load_features(path, 'train')
+        self.feat_dict.update(self._load_features(path, 'val'))
+        self.feat_dict.update(self._load_features(path, 'test'))
+        
+    def _load_model(self, model_name):
+        if model_name == 'alexnet':
+            model = alexnet(pretrained=True)
+        elif model_name == 'inception':
+            model = inception_v3(pretrained=True)
+        elif model_name == 'resnet':
+            model = resnet101(pretrained=True)
+        return model
+
+    def _load_features(self, path, dataset):
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+        train_dataset = datasets.ImageFolder(
+            path + dataset,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+        train_loader = torch.utils.data.DataLoader(
+                train_dataset)
+
+        classes = [d for d in os.listdir(train_dataset.root) if os.path.isdir(os.path.join(train_dataset.root, d))]
+        class_to_idx = {classes[i]: i for i in range(len(classes))}
+        rev_class = {class_to_idx[key]: key for key in class_to_idx.keys()}
+
+        feat_dict = {}
+        for i, (input, target) in enumerate(train_loader):
+            x = self.model.forward(input)
+            feat_dict[rev_class[i]] = x.data
+        print(dataset + ' CNN features loaded!')
+        return feat_dict
+    
+    def forward(self, img_id):
+        """
+        Args:
+            - img_id that maps image -> sentence pairs in respective datasets.
+        """
+        # already computed tensor from pretrained
+        return self.feat_dict[str(img_id)]
