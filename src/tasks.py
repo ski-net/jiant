@@ -12,6 +12,7 @@ import logging as log
 import json
 import numpy as np
 from allennlp.training.metrics import CategoricalAccuracy, F1Measure, Average
+from modules import CNNEncoder
 
 from utils import load_tsv, process_sentence, truncate
 
