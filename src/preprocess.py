@@ -24,8 +24,8 @@ except BaseException:
 
 import _pickle as pkl
 
-#  from serialize import write_records, read_records
 import serialize
+import utils
 
 from tasks import SingleClassificationTask, PairClassificationTask, \
     PairRegressionTask, SequenceGenerationTask, RankingTask, \
@@ -60,14 +60,14 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'joci': (JOCITask, 'JOCI/'),
              'wiki2': (WikiText2LMTask, 'WikiText2/'),
              'wiki103': (WikiText103LMTask, 'WikiText103/'),
-             'bwb': (BWBLMTask, 'BWB/'), 
+             'bwb': (BWBLMTask, 'BWB/'),
              'pdtb': (PDTBTask, 'PDTB/'),
              'wmt14_en_de': (MTTask, 'wmt14_en_de'),
              'dissentbwb': (DisSentBWBSingleTask, 'DisSent/bwb/'),
              'dissentwiki': (DisSentWikiSingleTask, 'DisSent/wikitext/'),
              'dissentwikifull': (DisSentWikiFullTask, 'DisSent/wikitext/'),
-             'weakgrounded': (WeakGroundedTask, 'mscoco-temp/weakgrounded/'),
-             'grounded': (GroundedTask, 'mscoco-temp/grounded/'),
+             'weakgrounded': (WeakGroundedTask, 'mscoco/weakgrounded/'),
+             'grounded': (GroundedTask, 'mscoco/grounded/'),
              }
 
 SOS_TOK, EOS_TOK = "<SOS>", "<EOS>"
@@ -129,6 +129,26 @@ def del_field_tokens(instance):
         field = instance.fields['input2']
         del field.tokens
 
+
+def _index_split(task, split, token_indexer, vocab, record_file, args=None):
+    """Index instances and stream to disk.
+
+    Args:
+        task: Task instance
+        split: (string), 'train', 'val', or 'test'
+        token_indexer: dict of token indexers
+        vocab: Vocabulary instance
+        record_file: (string) file to write serialized Instances to
+    """
+    log_prefix = "\tTask '%s', split '%s'" % (task.name, split)
+    log.info("%s: indexing from scratch", log_prefix)
+    log.info("%s: processing to tokens", log_prefix)
+    instance_list = process_task_split(task, split, token_indexer, args)
+    log.info("%s: %d examples to index", log_prefix, len(instance_list))
+    serialize.write_records(
+        _indexed_instance_generator(instance_list, vocab), record_file)
+    log.info("%s: saved instances to %s", log_prefix, record_file)
+
 def build_tasks(args):
     '''Main logic for preparing tasks, doing so by
     1) creating / loading the tasks
@@ -140,8 +160,7 @@ def build_tasks(args):
 
     # 1) create / load tasks
     prepreproc_dir = os.path.join(args.exp_dir, "prepreproc")
-    if not os.path.isdir(prepreproc_dir):
-        os.mkdir(prepreproc_dir)
+    utils.maybe_make_dir(prepreproc_dir)
     tasks, train_task_names, eval_task_names = \
         get_tasks(args.train_tasks, args.eval_tasks, args.max_seq_len,
                   path=args.data_dir, scratch_path=args.exp_dir,
@@ -191,13 +210,8 @@ def build_tasks(args):
 
     # 4) Index tasks using vocab (if preprocessed copy not available).
     preproc_dir = os.path.join(args.exp_dir, "preproc")
-    if not os.path.isdir(preproc_dir):
-        os.mkdir(preproc_dir)
-    preproc_file_names = set()
-    if not args.reload_vocab and not args.reload_indexing:
-        for file in os.listdir(preproc_dir):
-            preproc_file_names.add(file.split("__")[0])
-
+    utils.maybe_make_dir(preproc_dir)
+    global_preproc_dir = os.path.join(args.global_ro_exp_dir, "preproc")
     for task in tasks:
         if not task.name in preproc_file_names:
             log.info("\tTask '%s': indexing from scratch", task.name)
