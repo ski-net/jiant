@@ -200,7 +200,7 @@ class WikiTextLMTask(LanguageModelingTask):
                 toks = row.strip().split()
                 if not toks:
                     continue
-                data.append(process_sentence(toks, max_seq_len))
+                data.append(process_sentence(toks, 10000)) # long_enough
         return data
 
 

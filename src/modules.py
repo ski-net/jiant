@@ -162,12 +162,13 @@ class BiLMEncoder(SentenceEncoder):
         # The masks should be the same though
         fwd_sent_enc, fwd_sent_mask = self._uni_directional_forward(sent)
         if bwd_sent is not None:
-            bwd_sent_enc, _ = self._uni_directional_forward(bwd_sent, False)
-            sent_enc = torch.cat([fwd_sent_enc, bwd_sent_enc], dim=-1)
+            bwd_sent_enc, bwd_sent_mask = self._uni_directional_forward(bwd_sent, False)
+            #sent_enc = torch.cat([fwd_sent_enc, bwd_sent_enc], dim=-1)
         else:
-            sent_enc = fwd_sent_enc
+            bwd_sent_enc = None
+            bwd_sent_mask = None
 
-        return sent_enc, fwd_sent_mask
+        return fwd_sent_enc, bwd_sent_enc, fwd_sent_mask, bwd_sent_mask
 
 
 class BoWSentEncoder(Model):

@@ -69,8 +69,8 @@ def build_model(args, vocab, pretrained_embs, tasks):
         if args.bidirectional:
             rnn_params['bidirectional'] = False
             if args.sent_enc == 'rnn':
-                fwd = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
-                bwd = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
+                fwd = s2s_e(stateful=True).by_name('lstm').from_params(copy.deepcopy(rnn_params))
+                bwd = s2s_e(stateful=True).by_name('lstm').from_params(copy.deepcopy(rnn_params))
             elif args.sent_enc == 'transformer':
                 fwd = MaskedStackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
                 bwd = MaskedStackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
@@ -451,10 +451,11 @@ class MultiTaskModel(nn.Module):
             out['logits'] = logits
             targs = batch['targs']['words'].view(-1)
         else:
-            sent, mask = sent_encoder(batch['input'], batch['input_bwd'])
-            sent = sent.masked_fill(1 - mask.byte(), 0)  # avoid NaNs
-            split = int(self.sent_encoder.output_dim / 2)
-            fwd, bwd = sent[:, :, :split], sent[:, :, split:]
+            fwd_sent, bwd_sent, mask, bwd_mask = sent_encoder(batch['input'], batch['input_bwd'])
+            fwd = fwd_sent.masked_fill(1 - mask.byte(), 0)  # avoid NaNs
+            bwd = bwd_sent.masked_fill(1 - bwd_mask.byte(), 0)  # avoid NaNs
+            #split = int(self.sent_encoder.output_dim / 2)
+            #fwd, bwd = sent[:, :, :split], sent[:, :, split:]
             hid2voc = getattr(self, "%s_hid2voc" % task.name)
             logits_fwd = hid2voc(fwd).view(b_size * seq_len, -1)
             logits_bwd = hid2voc(bwd).view(b_size * seq_len, -1)
