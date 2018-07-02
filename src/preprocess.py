@@ -6,6 +6,7 @@ import io
 import os
 import copy
 import logging as log
+import math
 from collections import defaultdict
 import numpy as np
 import torch
@@ -275,10 +276,10 @@ def get_tasks(train_tasks, eval_tasks, max_seq_len, path=None,
         tasks.append(task)
 
     for task in tasks: # hacky
-        if isinstance(task, LanguageModelingTask): # should be true to seq task?
-            task.n_tr_examples  = len(task.train_data_text)
-            task.n_val_examples = len(task.val_data_text)
-            task.n_te_examples  = len(task.test_data_text)
+        if isinstance(task, LanguageModelingTask): 
+            task.n_tr_examples  = math.ceil( sum([len(sent)-1 for sent in task.train_data_text]) / max_seq_len )
+            task.n_val_examples = math.ceil( sum([len(sent)-1 for sent in task.val_data_text]) / max_seq_len ) 
+            task.n_te_examples  = math.ceil( sum([len(sent)-1 for sent in task.test_data_text]) / max_seq_len )
         else:
             task.n_tr_examples  = len(task.train_data_text[0])
             task.n_val_examples = len(task.val_data_text[0])

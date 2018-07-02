@@ -63,7 +63,8 @@ def main(cl_arguments):
     config_file = os.path.join(args.run_dir, "params.conf")
     config.write_params(args, config_file)
     log.info("Saved config to %s", config_file)
-
+    import ipdb
+    ipdb.set_trace()
     try:
       log.info("Waiting on git info....")
       git_branch_name = subprocess.check_output('git rev-parse --abbrev-ref HEAD', stderr=subprocess.STDOUT, timeout=10, shell=True)

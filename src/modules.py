@@ -165,8 +165,9 @@ class BiLMEncoder(SentenceEncoder):
             bwd_sent_enc, bwd_sent_mask = self._uni_directional_forward(bwd_sent, False)
             #sent_enc = torch.cat([fwd_sent_enc, bwd_sent_enc], dim=-1)
         else:
-            bwd_sent_enc = None
-            bwd_sent_mask = None
+            #bwd_sent_enc = None
+            #bwd_sent_mask = None
+            return fwd_sent_enc, fwd_sent_mask # not a good solution - temp
 
         return fwd_sent_enc, bwd_sent_enc, fwd_sent_mask, bwd_sent_mask
 
