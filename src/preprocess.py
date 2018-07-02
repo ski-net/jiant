@@ -301,19 +301,10 @@ def get_tasks(train_tasks, eval_tasks, max_seq_len, path=None,
         #task.truncate(max_seq_len, SOS_TOK, EOS_TOK)
         tasks.append(task)
 
-<<<<<<< HEAD
-    for task in tasks: # hacky
         if isinstance(task, LanguageModelingTask): 
             task.n_tr_examples  = math.ceil( sum([len(sent)-1 for sent in task.train_data_text]) / max_seq_len )
             task.n_val_examples = math.ceil( sum([len(sent)-1 for sent in task.val_data_text]) / max_seq_len ) 
             task.n_te_examples  = math.ceil( sum([len(sent)-1 for sent in task.test_data_text]) / max_seq_len )
-=======
-    for task in tasks:  # hacky
-        if isinstance(task, LanguageModelingTask):  # should be true to seq task?
-            task.n_tr_examples = len(task.train_data_text)
-            task.n_val_examples = len(task.val_data_text)
-            task.n_te_examples = len(task.test_data_text)
->>>>>>> master
         else:
             task.n_tr_examples = len(task.train_data_text[0])
             task.n_val_examples = len(task.val_data_text[0])
@@ -402,12 +393,7 @@ def get_fastText_model(vocab, d_word, model_file=None):
     log.info("\tFinished loading pretrained fastText model and embeddings")
     return embeddings, model
 
-<<<<<<< HEAD
-def process_task_split(task, split, token_indexer, args=None):
-=======
-
-def process_task_split(task, split, token_indexer):
->>>>>>> master
+def process_task_split(task, split, token_indexer, args):
     '''
     Convert a task split into AllenNLP fields.
     Different tasks have different formats and fields, so process_task routes tasks
@@ -436,7 +422,8 @@ def process_task_split(task, split, token_indexer):
         instances = process_single_pair_task_split(split_text, token_indexer,
                                                    is_pair=True, classification=False)
     elif isinstance(task, LanguageModelingTask):
-        instances = process_lm_task_split(split_text, token_indexer, args)
+        isTrain = 1 if split == 'train' else 0
+        instances = process_lm_task_split(split_text, token_indexer, args, train=isTrain)
     elif isinstance(task, MTTask):
         instances = process_mt_task_split(split_text, token_indexer)
     elif isinstance(task, SequenceGenerationTask):
@@ -515,17 +502,21 @@ def process_single_pair_task_split(split, indexers, is_pair=True, classification
                          zip(inputs1, labels)]
     return instances  # DatasetReader(instances) #Batch(instances) #Dataset(instances)
 
+def process_lm_task_split(split, indexers, args, train=False):
+    if train:
+        return _process_lm_task_split_train(split, indexers, args.batch_size, args.max_seq_len)
+    else:
+        return _process_lm_task_split_train(split, indexers, 1, args.max_seq_len)
 
-def process_lm_task_split(split, indexers, args):
+def _process_lm_task_split_train(split, indexers, b_size, seq_len):
     ''' Process a language modeling split '''
-    _batchSize = args.batch_size
-    _tokens_per_instance = args.max_seq_len
+    _batchSize = b_size
+    _tokens_per_instance = seq_len
 
     if "chars" not in indexers:
         targs_indexers = {"words": SingleIdTokenIndexer()}
     else:
         targs_indexers = indexers
-<<<<<<< HEAD
 
     def _getBatchOffset(idx: int):
         fwd_offset = int( int(idx / _batchSize) + (idx % _batchSize) * _batchN )
@@ -576,17 +567,6 @@ def process_lm_task_split(split, indexers, args):
         instances.append(Instance({'input': input_field, 'targs': output_field, 
             'input_bwd': bwd_input_field, 'targs_b': bwd_output_field}))
 
-=======
-    trg_fwd = [TextField(list(map(Token, sent[1:])), token_indexers=targs_indexers)
-               for sent in split]
-    trg_bwd = [TextField(list(map(Token, sent[::-1][1:])), token_indexers=targs_indexers)
-               for sent in split]
-    # instances = [Instance({"input": inp, "targs": trg_f, "targs_b": trg_b})
-    #             for (inp, trg_f, trg_b) in zip(inputs, trg_fwd, trg_bwd)]
-    instances = [Instance({"input": inp_f, "input_bwd": inp_b, "targs": trg_f, "targs_b": trg_b})
-                 for (inp_f, inp_b, trg_f, trg_b) in zip(inp_fwd, inp_bwd, trg_fwd, trg_bwd)]
-    #instances = [Instance({"input": inp_f, "targs": trg_f}) for (inp_f, trg_f) in zip(inp_fwd, trg_fwd)]
->>>>>>> master
     return instances
 
 
