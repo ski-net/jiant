@@ -503,10 +503,10 @@ def process_single_pair_task_split(split, indexers, is_pair=True, classification
     return instances  # DatasetReader(instances) #Batch(instances) #Dataset(instances)
 
 def process_lm_task_split(split, indexers, args, train=False):
-    if train:
-        return _process_lm_task_split_train(split, indexers, args.batch_size, args.max_seq_len)
-    else:
-        return _process_lm_task_split_train(split, indexers, 1, args.max_seq_len)
+    #if train:
+    return _process_lm_task_split_train(split, indexers, args.batch_size, args.max_seq_len)
+    #else:
+    #    return _process_lm_task_split_train(split, indexers, 1, args.max_seq_len)
 
 def _process_lm_task_split_train(split, indexers, b_size, seq_len):
     ''' Process a language modeling split '''
