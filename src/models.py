@@ -28,13 +28,13 @@ from tasks import STSBTask, CoLATask, SSTTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, \
     PairOrdinalRegressionTask, JOCITask, WeakGroundedTask, \
-    GroundedTask, MTTask 
+    GroundedTask, MTTask, WikiInsertionsTask
 from modules import SentenceEncoder, BoWSentEncoder, \
     AttnPairEncoder, MaskedStackedSelfAttentionEncoder, \
     BiLMEncoder, ElmoCharacterEncoder, Classifier, Pooler, \
     SingleClassifier, PairClassifier, CNNEncoder
 from utils import assert_for_log
-from seq2seq_decoder import Seq2SeqDecoder
+from seq2seq_decoder import Seq2SeqDecoder, WikiInsertionDecoder
 
 # Elmo stuff
 # Look in $ELMO_SRC_DIR (e.g. /usr/share/jsalt/elmo) or download from web
@@ -217,6 +217,16 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
         elif isinstance(task, LanguageModelingTask):
             hid2voc = build_lm(task, d_sent, args)
             setattr(model, '%s_hid2voc' % task.name, hid2voc)
+        elif isinstance(task, WikiInsertionsTask):
+            decoder = WikiInsertionDecoder.from_params(vocab,
+                                                 Params({'input_dim': d_sent,
+                                                         'target_embedding_dim': 300,
+                                                         'max_decoding_steps': 200,
+                                                         'target_namespace': 'tokens',
+                                                         'attention': 'bilinear',
+                                                         'dropout': args.dropout,
+                                                         'scheduled_sampling_ratio': 0.0}))
+            setattr(model, '%s_decoder' % task.name, decoder)
         elif isinstance(task, MTTask):
             decoder = Seq2SeqDecoder.from_params(vocab,
                                                  Params({'input_dim': d_sent,
@@ -429,7 +439,13 @@ class MultiTaskModel(nn.Module):
         #b_size, seq_len = batch['inputs']['words'].size()
         sent, sent_mask = self.sent_encoder(batch['inputs'])
 
-        if isinstance(task, MTTask):
+        if isinstance(task, WikiInsertionsTask):
+            decoder = getattr(self, "%s_decoder" % task.name)
+            out = decoder.forward(sent, sent_mask, ins_idx, batch['targs'])
+            task.scorer1(math.exp(out['loss'].item()))
+            return out
+
+        elif isinstance(task, MTTask):
             decoder = getattr(self, "%s_decoder" % task.name)
             out = decoder.forward(sent, sent_mask, batch['targs'])
             task.scorer1(math.exp(out['loss'].item()))
@@ -437,6 +453,7 @@ class MultiTaskModel(nn.Module):
 
         if 'targs' in batch:
             pass
+
         return out
 
     def _lm_forward(self, batch, task):
