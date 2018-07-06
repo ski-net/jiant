@@ -57,6 +57,19 @@ def evaluate(model, tasks, batch_size, cuda_device, split="val"):
     return all_metrics, all_preds
 
 
+GLUE_NAME_MAP = {'cola': 'CoLA',
+                 'diagnostic': 'AX',
+                 'mnli-mm': 'MNLI-mm',
+                 'mnli-m': 'MNLI-m',
+                 'mrpc': 'MRPC',
+                 'qnli': 'QNLI',
+                 'qqp': 'QQP',
+                 'rte': 'RTE',
+                 'sst': 'SST-2',
+                 'sts-b': 'STS-B',
+                 'wnli': 'WNLI'}
+
+
 def write_preds(all_preds, pred_dir):
     ''' Write predictions to separate files located in pred_dir.
     We write special code to handle various GLUE tasks.
@@ -86,22 +99,24 @@ def write_preds(all_preds, pred_dir):
         if task == 'mnli': # 9796 + 9847 + 1104 = 20747
             assert len(preds) == 20747, "Missing predictions for MNLI!"
             pred_map = {0: 'neutral', 1: 'entailment', 2: 'contradiction'}
-            write_preds_to_file(preds[:9796], os.path.join(pred_dir, "%s-m.tsv" % task), pred_map)
-            write_preds_to_file(preds[9796:19643], os.path.join(pred_dir, "%s-mm.tsv" % task),
+            write_preds_to_file(preds[:9796], os.path.join(pred_dir, "MNLI-m.tsv" % task), pred_map)
+            write_preds_to_file(preds[9796:19643], os.path.join(pred_dir, "MNLI-mm.tsv" % task),
                                 pred_map=pred_map)
-            write_preds_to_file(preds[19643:], os.path.join(pred_dir, "diagnostic.tsv"), pred_map)
+            write_preds_to_file(preds[19643:], os.path.join(pred_dir, "AX.tsv"), pred_map)
         elif task in ['rte', 'qnli']:
             pred_map = {0: 'not_entailment', 1: 'entailment'}
-            write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % task), pred_map)
+            write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % GLUE_NAME_MAP[task]), pred_map)
         elif task in ['sts-b']:
             preds = [min(max(0., pred * 5.), 5.) for pred in preds]
-            write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % task), write_type=float)
+            write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % GLUE_NAME_MAP[task]), write_type=float)
         elif task in ['wmt']:
             # convert each prediction to a single string if we find a list of tokens
             if isinstance(preds[0], list):
                 assert isinstance(preds[0][0], str)
                 preds = [' '.join(pred) for pred in preds]
             write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % task), write_type=str)
+        elif task in GLUE_NAME_MAP:
+            write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % GLUE_NAME_MAP[task]))
         else:
             write_preds_to_file(preds, os.path.join(pred_dir, "%s.tsv" % task))
     log.info("Wrote predictions to %s", pred_dir)
