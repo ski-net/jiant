@@ -697,19 +697,19 @@ class NLITypeProbingTask(PairClassificationTask):
     ''' Task class for Probing Task (NLI-type)'''
 
     def __init__(self, path, max_seq_len, name="nli-prob"):
-        super(NLITypeProbingTask, self).__init__(name, 3)
+        super(NLITypeProbingTask, self).__init__(name, 8)
         self.load_data(path, max_seq_len)
         self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
             self.val_data_text[0] + self.val_data_text[1]
 
     def load_data(self, path, max_seq_len):
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
-        tr_data = load_tsv(os.path.join(path, 'train_dummy.tsv'), max_seq_len,
-                        s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
-        val_data = load_tsv(os.path.join(path, 'dat_cv/with.cvcv.mnli'), max_seq_len,
-                        s1_idx=0, s2_idx=1, targ_idx=2, targ_map=targ_map, skip_rows=0)
-        te_data = load_tsv(os.path.join(path, 'test_dummy.tsv'), max_seq_len,
-                        s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
+        tr_data = load_tsv(os.path.join(path, 'manage_train.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=4, targ_idx=None, targ_map=targ_map, skip_rows=1)
+        val_data = load_tsv(os.path.join(path, 'manage_train.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=4, targ_idx=5, targ_map=targ_map, skip_rows=1)
+        te_data = load_tsv(os.path.join(path, 'manage_train.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=4, targ_idx=None, idx_idx=0, skip_rows=1)
 
         self.train_data_text = tr_data
         self.val_data_text = val_data
