@@ -1,9 +1,9 @@
 '''Core model and functions for building it.'''
+import os
 import sys
 import math
 import copy
 import logging as log
-import os
 
 import torch
 import torch.nn as nn
@@ -24,28 +24,28 @@ from allennlp.modules.seq2seq_encoders import Seq2SeqEncoder as s2s_e
 from allennlp.modules.seq2seq_encoders import StackedSelfAttentionEncoder
 from allennlp.training.metrics import Average
 
-from utils import get_batch_utilization
+from .utils import get_batch_utilization
 
-from tasks import STSBTask, CoLATask, SSTTask, \
+from .tasks import STSBTask, CoLATask, SSTTask, \
     PairClassificationTask, SingleClassificationTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, \
     PairOrdinalRegressionTask, JOCITask, WeakGroundedTask, \
     GroundedTask, MTTask, RedditTask, WikiInsertionsTask
 
-from tasks import STSBTask, CoLATask, \
+from .tasks import STSBTask, CoLATask, \
     ClassificationTask, PairClassificationTask, SingleClassificationTask, \
     RegressionTask, PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, MTTask, \
     PairOrdinalRegressionTask, JOCITask, \
     WeakGroundedTask, GroundedTask, VAETask, \
     GroundedTask, TaggingTask, POSTaggingTask, CCGTaggingTask
-from modules import SentenceEncoder, BoWSentEncoder, \
+from .modules import SentenceEncoder, BoWSentEncoder, \
     AttnPairEncoder, MaskedStackedSelfAttentionEncoder, \
     BiLMEncoder, ElmoCharacterEncoder, Classifier, Pooler, \
     SingleClassifier, PairClassifier, CNNEncoder
-from utils import assert_for_log, get_batch_utilization, get_batch_size_from_field
-from seq2seq_decoder import Seq2SeqDecoder, WikiInsertionDecoder
+from .utils import assert_for_log, get_batch_utilization, get_batch_size_from_field
+from .seq2seq_decoder import Seq2SeqDecoder, WikiInsertionDecoder
 
 # Elmo stuff
 # Look in $ELMO_SRC_DIR (e.g. /usr/share/jsalt/elmo) or download from web
@@ -55,10 +55,6 @@ ELMO_SRC_DIR = (os.getenv("ELMO_SRC_DIR") or
                 "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/")
 ELMO_OPT_PATH = os.path.join(ELMO_SRC_DIR, ELMO_OPT_NAME)
 ELMO_WEIGHTS_PATH = os.path.join(ELMO_SRC_DIR, ELMO_WEIGHTS_NAME)
-#  ELMO_OPT_PATH = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"  # pylint: disable=line-too-long
-# ELMO_WEIGHTS_PATH =
-# "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
-# # pylint: disable=line-too-long
 
 
 def build_model(args, vocab, pretrained_embs, tasks):
@@ -432,7 +428,6 @@ class MultiTaskModel(nn.Module):
 
         # embed the sentence
         sent_embs, sent_mask = self.sent_encoder(batch['input1'])
-        #pdb.set_trace()
         # pass to a task specific classifier
         classifier = getattr(self, "%s_mdl" % task.name)
         logits = classifier(sent_embs, sent_mask)
@@ -475,16 +470,17 @@ class MultiTaskModel(nn.Module):
         out['n_exs'] = get_batch_size_from_field(batch['input1'])
 
         if 'labels' in batch:
-            labels = batch['labels'].squeeze(-1)
+            labels = batch['labels']
+            labels = labels.squeeze(-1) if len(labels.size()) > 1 else labels
             if isinstance(task, JOCITask):
-                logits = logits.squeeze(-1)
+                logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
                 out['loss'] = F.mse_loss(logits, labels)
                 logits_np = logits.data.cpu().numpy()
                 labels_np = labels.data.cpu().numpy()
                 task.scorer1(mean_squared_error(logits_np, labels_np))
                 task.scorer2(logits_np, labels_np)
             elif isinstance(task, STSBTask):
-                logits = logits.squeeze(-1)
+                logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
                 out['loss'] = F.mse_loss(logits, labels)
                 logits_np = logits.data.cpu().numpy()
                 labels_np = labels.data.cpu().numpy()
