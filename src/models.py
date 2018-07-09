@@ -619,7 +619,6 @@ class MultiTaskModel(nn.Module):
         #import ipdb; ipdb.set_trace()
         sent, sent_mask = self.sent_encoder(batch['inputs'])
         #out['n_exs'] = get_batch_size_from_field(batch['input1'])
-        out['n_exs'] = get_batch_size_from_field(batch['inputs'])
 
         if isinstance(task, WikiInsertionsTask):
             decoder = getattr(self, "%s_decoder" % task.name)
@@ -638,6 +637,8 @@ class MultiTaskModel(nn.Module):
 
         if predict:
             pass
+
+        out['n_exs'] = get_batch_size_from_field(batch['inputs'])
 
         return out
 
