@@ -615,7 +615,7 @@ class MultiTaskModel(nn.Module):
     def _seq_gen_forward(self, batch, task, predict):
         ''' For translation, denoising, maybe language modeling? '''
         out = {}
-        #import ipdb; ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
         sent, sent_mask = self.sent_encoder(batch['inputs'])
         out['n_exs'] = get_batch_size(batch)
 
@@ -636,8 +636,6 @@ class MultiTaskModel(nn.Module):
 
         if predict:
             pass
-
-        out['n_exs'] = get_batch_size_from_field(batch['inputs'])
 
         return out
 

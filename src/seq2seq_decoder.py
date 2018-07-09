@@ -25,8 +25,6 @@ import logging as log
 log.basicConfig(format='%(asctime)s: %(message)s',
                 datefmt='%m/%d %I:%M:%S %p', level=log.INFO)
 
-import ipdb
-
 class Seq2SeqDecoder(Model):
     """
     This is a slightly modified version of AllenNLP SimpleSeq2Seq class
@@ -306,12 +304,12 @@ class WikiInsertionDecoder(Seq2SeqDecoder):
            Output of ``Textfield.as_array()`` applied on target ``TextField``. We assume that the
            target tokens are also represented as a ``TextField``.
         """
-        log.info("Got insertion index: %d"%insertion_idx)
         # (batch_size, input_sequence_length, encoder_output_dim)
         batch_size, _, _ = encoder_outputs.size()
         #source_mask = get_text_field_mask(source_tokens)
         #encoder_outputs = self._encoder(embedded_input, source_mask)
         # final_encoder_output = encoder_outputs[:, -1]  # (batch_size, encoder_output_dim)
+        #import ipdb; ipdb.set_trace()
         if target_tokens is not None:
             targets = target_tokens["words"]
             target_sequence_length = targets.size()[1]

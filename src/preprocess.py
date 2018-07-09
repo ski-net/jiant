@@ -301,7 +301,7 @@ def build_tasks(args):
                 # Re-index from scratch.
                 record_file = _get_serialized_record_path(task.name, split,
                                                           preproc_dir)
-                _index_split(task, split, token_indexer, vocab, record_file)
+                _index_split(task, split, token_indexer, None, vocab, record_file)
 
         # Delete in-memory data - we'll lazy-load from disk later.
         task.train_data = None
