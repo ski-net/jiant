@@ -88,12 +88,15 @@ def sent_to_dict(sentence):
 
 import json
 data = {"data": []}
+num_sent = len(corpus.parsed_sents())
 #may want to parallelize this for loop
 for sentence in corpus.parsed_sents():
     data["data"].append(sent_to_dict(sentence))
 
-with open('output.txt', 'w') as outfile:
-    json.dump(data, outfile, indent=4)
+with open('output.json', 'w') as outfile:
+    for datum in data["data"]:
+        json.dump(datum, outfile)
+        outfile.write("\n")
 
 print("done.")
 print("Converting to JSON takes " + str(time.time() - t_0) + " seconds.")
