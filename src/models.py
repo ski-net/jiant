@@ -31,7 +31,7 @@ from tasks import STSBTask, CoLATask, SSTTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, \
     PairOrdinalRegressionTask, JOCITask, WeakGroundedTask, \
-    GroundedTask, MTTask, RedditTask
+    GroundedTask, MTTask, RedditTask, WikiInsertionsTask
 
 from tasks import STSBTask, CoLATask, \
     ClassificationTask, PairClassificationTask, SingleClassificationTask, \
@@ -46,7 +46,6 @@ from modules import SentenceEncoder, BoWSentEncoder, \
     SingleClassifier, PairClassifier, CNNEncoder
 from utils import assert_for_log, get_batch_utilization, get_batch_size_from_field
 from seq2seq_decoder import Seq2SeqDecoder, WikiInsertionDecoder
-
 
 # Elmo stuff
 # Look in $ELMO_SRC_DIR (e.g. /usr/share/jsalt/elmo) or download from web
@@ -232,6 +231,16 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
         elif isinstance(task, TaggingTask):
             hid2tag = build_tagger(task, d_sent, task.num_tags)
             setattr(model, '%s_mdl' % task.name, hid2tag)
+        elif isinstance(task, WikiInsertionsTask):
+            decoder = WikiInsertionDecoder.from_params(vocab,
+                                                 Params({'input_dim': d_sent,
+                                                         'target_embedding_dim': 300,
+                                                         'max_decoding_steps': 200,
+                                                         'target_namespace': 'tokens',
+                                                         'attention': 'bilinear',
+                                                         'dropout': args.dropout,
+                                                         'scheduled_sampling_ratio': 0.0}))
+            setattr(model, '%s_decoder' % task.name, decoder)
         elif isinstance(task, MTTask):
             decoder = Seq2SeqDecoder.from_params(vocab,
                                                  Params({'input_dim': d_sent,
@@ -586,7 +595,7 @@ class MultiTaskModel(nn.Module):
 
 
     def _vae_forward(self, batch, task):
-        ''' For translation, denoising, maybe language modeling? '''
+        ''' For variational autoencoder '''
         out = {}
         sent, sent_mask = self.sent_encoder(batch['inputs'])
         out['n_exs'] = get_batch_size_from_field(batch['input1'])
@@ -605,14 +614,16 @@ class MultiTaskModel(nn.Module):
         return out
 
     def _seq_gen_forward(self, batch, task, predict):
-        ''' For variational autoencoder '''
+        ''' For translation, denoising, maybe language modeling? '''
         out = {}
+        #import ipdb; ipdb.set_trace()
         sent, sent_mask = self.sent_encoder(batch['inputs'])
-        out['n_exs'] = get_batch_size_from_field(batch['input1'])
+        #out['n_exs'] = get_batch_size_from_field(batch['input1'])
+        out['n_exs'] = get_batch_size_from_field(batch['inputs'])
 
         if isinstance(task, WikiInsertionsTask):
             decoder = getattr(self, "%s_decoder" % task.name)
-            out = decoder.forward(sent, sent_mask, ins_idx, batch['targs'])
+            out = decoder.forward(sent, sent_mask, 0, batch['targs'])
             task.scorer1(math.exp(out['loss'].item()))
             return out
 
