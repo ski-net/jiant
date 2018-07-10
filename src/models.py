@@ -4,7 +4,7 @@ import sys
 import math
 import copy
 import logging as log
-import ipdb as pdb
+# import ipdb as pdb
 
 import torch
 import torch.nn as nn
@@ -118,7 +118,8 @@ def build_model(args, vocab, pretrained_embs, tasks):
 
     # Build model and classifiers
     model = MultiTaskModel(args, sent_encoder, vocab)
-    build_modules(tasks, model, d_sent, vocab, embedder, args)
+    for task in tasks:
+        build_module(task, model, d_sent, vocab, embedder, args)
     if args.cuda >= 0:
         model = model.cuda()
     log.info(model)
@@ -212,61 +213,62 @@ def build_embeddings(args, vocab, pretrained_embs=None):
     return d_emb, embedder, cove_emb
 
 
-def build_modules(tasks, model, d_sent, vocab, embedder, args):
-    ''' Build task-specific components for each task and add them to model '''
-    for task in tasks:
-        task_params = get_task_specific_params(args, task.name)
-        if isinstance(task, SingleClassificationTask):
-            module = build_single_sentence_module(task, d_sent, task_params)
-            setattr(model, '%s_mdl' % task.name, module)
-        elif isinstance(task, (PairClassificationTask, PairRegressionTask,
-                               PairOrdinalRegressionTask)):
-            module = build_pair_sentence_module(task, d_sent, model, vocab,
-                                                task_params)
-            setattr(model, '%s_mdl' % task.name, module)
-        elif isinstance(task, LanguageModelingTask):
-            hid2voc = build_lm(task, d_sent, args)
-            setattr(model, '%s_hid2voc' % task.name, hid2voc)
-        elif isinstance(task, TaggingTask):
-            hid2tag = build_tagger(task, d_sent, task.num_tags)
-            setattr(model, '%s_mdl' % task.name, hid2tag)
-        elif isinstance(task, MTTask):
-            decoder = Seq2SeqDecoder.from_params(vocab,
-                                                 Params({'input_dim': d_sent,
-                                                         'target_embedding_dim': 300,
-                                                         'max_decoding_steps': 200,
-                                                         'target_namespace': 'tokens',
-                                                         'attention': 'bilinear',
-                                                         'dropout': args.dropout,
-                                                         'scheduled_sampling_ratio': 0.0}))
-            setattr(model, '%s_decoder' % task.name, decoder)
-        elif isinstance(task, SequenceGenerationTask):
-            decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
-            setattr(model, '%s_decoder' % task.name, decoder)
-            setattr(model, '%s_hid2voc' % task.name, hid2voc)
+def build_module(task, model, d_sent, vocab, embedder, args):
+    ''' Build task-specific components for a task and add them to model. '''
+    task_params = get_task_specific_params(args, task.name)
+    # Store task-specific params in case we want to access later
+    setattr(model, '%s_task_params' % task.name, task_params)
 
-        elif isinstance(task, VAETask):
-            decoder = Seq2SeqDecoder.from_params(vocab,
-                                                 Params({'input_dim': d_sent,
-                                                         'target_embedding_dim': 300,
-                                                         'max_decoding_steps': 200,
-                                                         'target_namespace': 'tokens',
-                                                         'attention': 'bilinear',
-                                                         'dropout': args.dropout,
-                                                         'scheduled_sampling_ratio': 0.0}))
-            setattr(model, '%s_decoder' % task.name, decoder)
+    if isinstance(task, SingleClassificationTask):
+        module = build_single_sentence_module(task, d_sent, task_params)
+        setattr(model, '%s_mdl' % task.name, module)
+    elif isinstance(task, (PairClassificationTask, PairRegressionTask,
+                           PairOrdinalRegressionTask)):
+        module = build_pair_sentence_module(task, d_sent, model, vocab,
+                                            task_params)
+        setattr(model, '%s_mdl' % task.name, module)
+    elif isinstance(task, LanguageModelingTask):
+        hid2voc = build_lm(task, d_sent, args)
+        setattr(model, '%s_hid2voc' % task.name, hid2voc)
+    elif isinstance(task, TaggingTask):
+        hid2tag = build_tagger(task, d_sent, task.num_tags)
+        setattr(model, '%s_mdl' % task.name, hid2tag)
+    elif isinstance(task, MTTask):
+        decoder = Seq2SeqDecoder.from_params(vocab,
+                                             Params({'input_dim': d_sent,
+                                                     'target_embedding_dim': 300,
+                                                     'max_decoding_steps': 200,
+                                                     'target_namespace': 'tokens',
+                                                     'attention': 'bilinear',
+                                                     'dropout': args.dropout,
+                                                     'scheduled_sampling_ratio': 0.0}))
+        setattr(model, '%s_decoder' % task.name, decoder)
+    elif isinstance(task, SequenceGenerationTask):
+        decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
+        setattr(model, '%s_decoder' % task.name, decoder)
+        setattr(model, '%s_hid2voc' % task.name, hid2voc)
 
-        elif isinstance(task, GroundedTask):
-            task.img_encoder = CNNEncoder(model_name='resnet', path=task.path)
-        elif isinstance(task, RankingTask):
-            pooler, dnn_ResponseModel = build_reddit_module(task, d_sent, task_params)
-            setattr(model, '%s_mdl' % task.name, pooler)
-            setattr(model, '%s_Response_mdl' % task.name, dnn_ResponseModel)
+    elif isinstance(task, VAETask):
+        decoder = Seq2SeqDecoder.from_params(vocab,
+                                             Params({'input_dim': d_sent,
+                                                     'target_embedding_dim': 300,
+                                                     'max_decoding_steps': 200,
+                                                     'target_namespace': 'tokens',
+                                                     'attention': 'bilinear',
+                                                     'dropout': args.dropout,
+                                                     'scheduled_sampling_ratio': 0.0}))
+        setattr(model, '%s_decoder' % task.name, decoder)
 
-            #print("NEED TO ADD DNN to RESPONSE INPUT -- TO DO: IMPLEMENT QUICKLY")
-        else:
-            raise ValueError("Module not found for %s" % task.name)
-    return
+    elif isinstance(task, GroundedTask):
+        task.img_encoder = CNNEncoder(model_name='resnet', path=task.path)
+    elif isinstance(task, RankingTask):
+        pooler, dnn_ResponseModel = build_reddit_module(task, d_sent, task_params)
+        setattr(model, '%s_mdl' % task.name, pooler)
+        setattr(model, '%s_Response_mdl' % task.name, dnn_ResponseModel)
+
+        #print("NEED TO ADD DNN to RESPONSE INPUT -- TO DO: IMPLEMENT QUICKLY")
+    else:
+        raise ValueError("Module not found for %s" % task.name)
 
 
 def get_task_specific_params(args, task):
@@ -611,7 +613,7 @@ class MultiTaskModel(nn.Module):
 
         if isinstance(task, MTTask):
             decoder = getattr(self, "%s_decoder" % task.name)
-            out = decoder.forward(sent, sent_mask, batch['targs'])
+            out.update(decoder.forward(sent, sent_mask, batch['targs']))
             task.scorer1(math.exp(out['loss'].item()))
             return out
 
@@ -652,7 +654,7 @@ class MultiTaskModel(nn.Module):
         out = {}
         b_size, seq_len = batch['targs']['words'].size()
         sent_encoder = self.sent_encoder
-        out['n_exs'] = get_batch_size(batch['input'])
+        out['n_exs'] = b_size #get_batch_size(batch['input'])
 
         if not isinstance(sent_encoder, BiLMEncoder):
             sent, mask = sent_encoder(batch['input'])
@@ -685,58 +687,39 @@ class MultiTaskModel(nn.Module):
 
     def _grounded_classification_forward(self, batch, task, predict):
         out = {}
-        d_1, d_2 = self.sent_encoder.output_dim, 2048
-
         # embed the sentence, embed the image, map and classify
         sent_emb, sent_mask = self.sent_encoder(batch['input1'])
-        out['n_exs'] = get_batch_size(batch)
-        image_map = nn.Linear(d_1, d_2).cuda()
-        sent_transform = image_map(sent_emb)
-        ids = batch['ids'].cpu().squeeze(-1)
-        ids = list(ids.data.numpy())
+        batch_size = get_batch_size_from_field(batch['input1'])
+        out['n_exs'] = batch_size
+
+        ids = batch['ids'].cpu().squeeze(-1).data.numpy().tolist()
         labels = batch['labels'].cpu().squeeze(-1)
         labels = [int(item) for item in labels.data.numpy()]
 
-        seq, true = [], []
-        for i in range(len(ids)):
-            img_id, label = ids[i], labels[i]
-            init_emb = task.img_encoder.forward(int(img_id)).data.numpy()[0]
-            seq.append(torch.tensor(init_emb, dtype=torch.float))
-            true.append(label)
-        img_emb = torch.stack(seq, dim=0)
+        cos = task.metric_fn
+        flags = Variable(torch.ones(batch_size))
 
-        batch_size = len(labels)
-        sent_transform = sent_transform.view(batch_size, -1)
-        image_map = nn.Linear(list(sent_transform.size())[-1], d_2).cuda()
-        sent_transform = image_map(sent_transform)
+        img_idx, preds, img_seq,sent_seq = 0, [], [], []
+        for sent in sent_emb.split(1):
+            seq_len = sent.size()[1]
+            sent = task.pooler(sent.view(seq_len, -1))
+            sent = torch.div(torch.sum(sent, dim=0), seq_len).cuda().reshape((1, -1))
+            img_feat = torch.tensor(task.img_encoder.forward(int(ids[img_idx])), dtype=torch.float32).cuda()
+            img_seq.append(img_feat); sent_seq.append(sent); img_idx += 1
+            sim = cos(sent, img_feat).cuda()
+            preds.append(sim.cpu().data.numpy()[0])
 
-        '''
-        cos = nn.SmoothL1Loss()
-        cos = nn.MSELoss()
-        cos = nn.L1Loss()
-        out['loss'] = cos(sent_emb, torch.tensor(img_emb, requires_grad=False))
-        '''
-        cos = nn.CosineEmbeddingLoss()
-        flags = Variable(torch.ones(len(labels)))
+        img_emb = torch.stack(img_seq, dim=0); sent_emb = torch.stack(sent_seq, dim=0)
+        metric = np.mean(preds)
+        task.scorer1.__call__(metric)
+        out['logits'] = torch.tensor(preds, dtype=torch.float32).reshape(1, -1)
+
+        cos = task.loss_fn; flags = Variable(torch.ones(batch_size))
         out['loss'] = cos(
             torch.tensor(
-                sent_transform, dtype=torch.float), torch.tensor(
-                img_emb, dtype=torch.float), flags)
-        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-        sim = cos(
-            torch.tensor(
-                sent_transform,
-                dtype=torch.float),
-            torch.tensor(
-                img_emb,
-                dtype=torch.float))
-        classifier = nn.Linear(len(labels), len(labels))
-        logits = classifier(sim)
-        out['logits'] = logits
+                sent_emb.reshape(batch_size, -1), dtype=torch.float), torch.tensor(
+                img_emb, dtype=torch.float).reshape(batch_size, -1), flags)
 
-        preds = [1 if item > 0 else 0 for item in logits.data.numpy()]
-        acc = [1 if preds[i] == labels[i] else 0 for i in range(len(labels))]
-        task.scorer1.__call__(np.sum(acc) / len(acc))
         if predict:
             out['preds'] = preds
 
