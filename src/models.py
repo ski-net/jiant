@@ -621,13 +621,13 @@ class MultiTaskModel(nn.Module):
 
         if isinstance(task, WikiInsertionsTask):
             decoder = getattr(self, "%s_decoder" % task.name)
-            out = decoder.forward(sent, sent_mask, 0, batch['targs'])
+            out.update(decoder.forward(sent, sent_mask, batch['targs']))
             task.scorer1(math.exp(out['loss'].item()))
             return out
 
         elif isinstance(task, MTTask):
             decoder = getattr(self, "%s_decoder" % task.name)
-            out = decoder.forward(sent, sent_mask, batch['targs'])
+            out.update(decoder.forward(sent, sent_mask, batch['targs']))
             task.scorer1(math.exp(out['loss'].item()))
             return out
 
