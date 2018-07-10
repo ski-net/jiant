@@ -176,8 +176,6 @@ class NLIProbingTask(PairClassificationTask):
 
     def __init__(self, name, n_classes):
         super().__init__(name)
-        self.use_classifier = 'mnli'
-
 
 
 class PairRegressionTask(RegressionTask):
@@ -710,14 +708,14 @@ class MultiNLITask(PairClassificationTask):
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
         tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
                            s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map, skip_rows=1)
-        val_matched_data = load_tsv(os.path.join(path, 'dev_matched.tsv'), max_seq_len,
-                                    s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map, skip_rows=1)
-        val_mismatched_data = load_tsv(os.path.join(path, 'dev_mismatched.tsv'), max_seq_len,
-                                       s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map,
-                                       skip_rows=1)
-        val_data = [m + mm for m, mm in zip(val_matched_data, val_mismatched_data)]
-        val_data = tuple(val_data)
-
+        #val_matched_data = load_tsv(os.path.join(path, 'dev_matched.tsv'), max_seq_len,
+         #                           s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map, skip_rows=1)
+        #val_mismatched_data = load_tsv(os.path.join(path, 'dev_mismatched.tsv'), max_seq_len,
+          #                             s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map,
+           #                            skip_rows=1)
+        #val_data = [m + mm for m, mm in zip(val_matched_data, val_mismatched_data)]
+        #val_data = tuple(val_data)
+        val_data = load_tsv(os.path.join(path, 'forget.tsv'), max_seq_len, s1_idx=3, s2_idx=4, targ_idx=5, targ_map=targ_map, skip_rows=0)
         te_matched_data = load_tsv(os.path.join(path, 'test_matched.tsv'), max_seq_len,
                                    s1_idx=8, s2_idx=9, targ_idx=None, idx_idx=0, skip_rows=1)
         te_mismatched_data = load_tsv(os.path.join(path, 'test_mismatched.tsv'), max_seq_len,
@@ -741,13 +739,14 @@ class NLITypeProbingTask(PairClassificationTask):
         self.load_data(path, max_seq_len)
         self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
             self.val_data_text[0] + self.val_data_text[1]
+        self.use_classifier='mnli'
 
     def load_data(self, path, max_seq_len):
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
         tr_data = load_tsv(os.path.join(path, 'train_dummy.tsv'), max_seq_len,
                         s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
-        val_data = load_tsv(os.path.join(path, 'dat_cv/with.cvcv.mnli'), max_seq_len,
-                        s1_idx=0, s2_idx=1, targ_idx=2, targ_map=targ_map, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'forget.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=4, targ_idx=5, targ_map=targ_map, skip_rows=0)
         te_data = load_tsv(os.path.join(path, 'test_dummy.tsv'), max_seq_len,
                         s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
 
