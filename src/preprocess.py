@@ -155,7 +155,7 @@ def del_field_tokens(instance):
         del field.tokens
 
 
-def _index_split(task, split, token_indexer, vocab, record_file):
+def _index_split(task, split, token_indexer, target_indexer, vocab, record_file):
     """Index instances and stream to disk.
     Args:
         task: Task instance
@@ -245,6 +245,7 @@ def build_tasks(args):
     vocab_path = os.path.join(args.exp_dir, 'vocab')
     emb_file = os.path.join(args.exp_dir, 'embs.pkl')
     token_indexer = {}
+    target_indexer = {"words": SingleIdTokenIndexer(namespace="targets")}
     if not args.word_embs == 'none':
         token_indexer["words"] = SingleIdTokenIndexer()
     if args.elmo:
@@ -300,7 +301,7 @@ def build_tasks(args):
                 # Re-index from scratch.
                 record_file = _get_serialized_record_path(task.name, split,
                                                           preproc_dir)
-                _index_split(task, split, token_indexer, vocab, record_file)
+                _index_split(task, split, token_indexer, None, vocab, record_file)
 
         # Delete in-memory data - we'll lazy-load from disk later.
         task.train_data = None
@@ -440,7 +441,7 @@ def get_vocab(word2freq, char2freq, target2freq, max_v_sizes):
     targets_by_freq = [(target, freq) for target, freq in target2freq.items()]
     targets_by_freq.sort(key=lambda x: x[1], reverse=True)
     for target, _ in targets_by_freq[:max_v_sizes['target']]:
-        vocab.add_token_to_namespace(target, 'targets') # TODO namespace
+        vocab.add_token_to_namespace(target, 'targets')
     return vocab
 
 
@@ -481,10 +482,3 @@ def get_fastText_model(vocab, d_word, model_file=None):
     embeddings = torch.FloatTensor(embeddings)
     log.info("\tFinished loading pretrained fastText model and embeddings")
     return embeddings, model
-
-
-
-
-
-
-
