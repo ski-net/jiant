@@ -265,7 +265,7 @@ def build_modules(tasks, model, d_sent, vocab, embedder, args):
             setattr(model, '%s_mdl' % task.name, pooler)
             setattr(model, '%s_Response_mdl' % task.name, dnn_ResponseModel)
             classifier = Classifier.from_params(
-                d_inp=9 * pooler.d_proj,
+                d_inp=7 * pooler.d_proj,
                 n_classes=2,
                 params=task_params,
             )
@@ -541,18 +541,12 @@ class MultiTaskModel(nn.Module):
         sent2_pool = sent2_pool.cuda()
         labels = labels.type(torch.LongTensor).cuda()
 
-        # dnn (for comparibility)
-        sent1_dnn = sent_dnn(sent1_pool)
-        sent2_dnn = sent_dnn(sent2_pool)
-
         # concatenate all features together
         classifier = getattr(self, "%s_classifier" % task.name)
         logits = classifier(torch.cat([
             context_sent_rep,
             sent1_pool,
             sent2_pool,
-            sent1_dnn,
-            sent2_dnn,
             torch.abs(context_sent_rep - sent1_pool),
             context_sent_rep * sent1_pool,
             torch.abs(context_sent_rep - sent2_pool),
