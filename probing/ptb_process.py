@@ -5,6 +5,7 @@ from __future__ import division
 #import ipdb as pdb
 import nltk
 nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
+
 # Install a few python packages using pip
 from w266_common import utils
 
@@ -42,21 +43,41 @@ import part2_helpers
 import pcfg, pcfg_test
 import cky, cky_test
 
-# Use the sample of the Penn Treebank included with NLTK.
-assert(nltk.download('treebank'))
-corpus = nltk.corpus.treebank
+# Using full ptb 
+corpus = nltk.corpus.ptb
 
+# Parsing file names to find file IDs corresponding to standard split of train, dev, and test data
+train_files, dev_files, dev_full_files, test_files = [], [], [], []
+for f in corpus.fileids():
+    if f.split('/')[0] == 'BROWN':
+        continue
+    section = int(f.split('/')[1])
+    file_num = int(f.split('/')[2][6:8])
+    if section > 1 and section < 22:
+        train_files.append(f)
+    elif section == 22:
+        dev_full_files.append(f)
+        if file_num < 20:
+            dev_files.append(f)
+    elif section == 23:
+        test_files.append(f)
+
+train_sent, dev_sent, dev_full_sent, test_sent = [], [], [], []
 use_full_ptb = True 
 if use_full_ptb:
     part2_helpers.verify_ptb_install()
-    corpus = nltk.corpus.ptb  # Throws errors, for some reason
-    # This configures the corpus to use the WSJ section only.
-    # The Brown section has some mis-bracketed trees that will cause the 
-    # corpus reader to throw (many) errors.
+    corpus = nltk.corpus.ptb  
     if not hasattr(corpus, '_parsed_sents'):
         print("Monkey-patching corpus reader...")
         corpus._parsed_sents = corpus.parsed_sents
-        corpus.parsed_sents = lambda: corpus._parsed_sents(categories=['news'])
+        for train_file in train_files:
+            train_sent += [s for s in corpus._parsed_sents(train_file)]
+        for dev_file in dev_files:
+            dev_sent += [s for s in corpus._parsed_sents(dev_file)]
+        for test_file in test_files:
+            test_sent += [s for s in corpus._parsed_sents(test_file)]
+        for dev_full_file in dev_full_files:
+            dev_full_sent += [s for s in corpus._parsed_sents(dev_full_file)]
 
 print("Converting to common JSON format...")
 print("Starting timer.")
@@ -98,17 +119,24 @@ def sent_to_dict(sentence):
     
     return json_d
 
-import json
-data = {"data": []}
-num_sent = len(corpus.parsed_sents())
-#may want to parallelize this for loop
-for sentence in corpus.parsed_sents():
-    data["data"].append(sent_to_dict(sentence))
+def tree_to_json(split, sent_list):
+    import json
 
-with open('ptb.json', 'w') as outfile:
-    for datum in data["data"]:
-        json.dump(datum, outfile)
-        outfile.write("\n")
+    data = {"data": []}
+    num_sent = len(sent_list)
+    #may want to parallelize this for loop
+    for sentence in sent_list:
+        data["data"].append(sent_to_dict(sentence))
+
+    with open('ptb_' + split + '.json', 'w') as outfile:
+        for datum in data["data"]:
+            json.dump(datum, outfile)
+            outfile.write("\n")
+
+#tree_to_json('train', train_sent)
+#tree_to_json('dev_full', dev_sent)
+#tree_to_json('test', test_sent)
+tree_to_json('dev.full', dev_full_sent)
 
 print("done.")
 print("Converting to JSON takes " + str(time.time() - t_0) + " seconds.")

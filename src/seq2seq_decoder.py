@@ -57,6 +57,7 @@ class Seq2SeqDecoder(Model):
             # concatenated to the input vector of the decoder at each time step.
             self._decoder_input_dim = input_dim + target_embedding_dim
         else:
+            self._decoder_attention = None
             self._decoder_input_dim = target_embedding_dim
         # TODO (pradeep): Do not hardcode decoder cell type.
         self._decoder_cell = LSTMCell(self._decoder_input_dim, self._decoder_output_dim)
