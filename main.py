@@ -1,4 +1,9 @@
-'''Train a multi-task model using AllenNLP '''
+'''Train a multi-task model using AllenNLP
+
+To debug this, run with -m ipdb:
+
+    python -m ipdb main.py --config_file ...
+'''
 # pylint: disable=no-member
 import argparse
 import glob
@@ -115,14 +120,6 @@ def main(cl_arguments):
             log.warning(
                 "GPU access failed. You might be using a CPU-only installation of PyTorch. Falling back to CPU.")
             args.cuda = -1
-    if args.debug:
-        log.info("Debugging is ON; we're importing pdb!")
-        try:
-            pass
-            #import ipdb as pdb
-        except ImportError:
-            pass
-            #import pdb
 
     # Prepare data #
     log.info("Loading tasks...")
@@ -236,7 +233,7 @@ def main(cl_arguments):
             # This logic looks strange. We think it works.
             best_epoch = best_epoch[task.name]
             layer_path = os.path.join(args.run_dir, "model_state_eval_best.th")
-            load_model_state(model, layer_path, args.cuda, skip_task_models=False, strict=False)
+            load_model_state(model, layer_path, args.cuda, skip_task_models=False, strict=strict)
 
     if args.do_eval:
         # Evaluate #
@@ -258,8 +255,9 @@ def main(cl_arguments):
 if __name__ == '__main__':
     try:
         main(sys.argv[1:])
-    except BaseException:
+    except BaseException as e:
         # Make sure we log the trace for any crashes before exiting.
         log.exception("Fatal error in main():")
+        raise e  # re-raise exception, in case debugger is attached.
         sys.exit(1)
     sys.exit(0)
