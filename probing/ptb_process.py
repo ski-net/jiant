@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
-import ipdb as pdb
+#import ipdb as pdb
 
 import nltk
 nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
@@ -108,8 +108,8 @@ def sent_to_dict(sentence):
     targets = []
     for index, subtree in enumerate(sentence.subtrees()):
         assoc_words = subtree.leaves()
-        if len(assoc_words) == 0:
-            pdb.set_trace()
+#        if len(assoc_words) == 0:
+#            pdb.set_trace()
         assoc_words = [(i, int(j)) for i, j in assoc_words]
         assoc_words.sort(key=lambda elem: elem[1])
 #        if subtree.label() == "NP" and subtree.leaves()[0][0] != '61' and find_depth(sentence, subtree) == 3:
@@ -182,10 +182,12 @@ def prune(tree):
                 null_children_indices.append(null_children_index)
                 tree_positions = recur_delete(tree_positions, null_children_index)
         
-    pruned_tree = str(tree)
+    #Very hacky, perhaps there's a better way to remove branches of a tree:
+    import re
+    pruned_tree = re.sub( '\s+', ' ', str(tree)).strip()
     #print(null_children_indices)
     prune_keys = [str(tree[index]) for index in null_children_indices]
-    prune_keys.sort(key=len, reverse=True)#Very hacky, perhaps there's a better way to remove branches of a tree
+    prune_keys.sort(key=len, reverse=True)
     for prune_key in prune_keys: 
         pruned_tree = pruned_tree.replace(prune_key, "")
     return Tree.fromstring(pruned_tree)
