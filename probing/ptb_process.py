@@ -133,10 +133,69 @@ def tree_to_json(split, sent_list):
             json.dump(datum, outfile)
             outfile.write("\n")
 
-#tree_to_json('train', train_sent)
-#tree_to_json('dev_full', dev_sent)
-#tree_to_json('test', test_sent)
+
+def is_null(tree):
+    if tree.label() == '-NONE-':
+        return True
+    if (not isinstance(tree, str)):
+        for i in range(len(tree)):        
+            if isinstance(tree[i], str) or (not is_null(tree[i])): #I have trouble not using recursion here
+                return False
+        return True
+    return False
+
+def recur_delete(all_indices, deletee):
+    modified_indices = []
+    for index in all_indices:
+        if len(index) >= len(deletee) and index[:len(deletee)] == deletee:
+            continue
+        else:
+            modified_indices.append(index)
+    return modified_indices
+
+def prune(tree):
+    tree_positions = tree.treepositions()
+    null_children_indices = []
+
+    while(len(tree_positions) > 0):
+        curr_tree_index = tree_positions.pop(0)
+        if curr_tree_index == ():
+            curr_subtree = tree
+        else:
+            curr_subtree = tree[curr_tree_index]
+        if isinstance(curr_subtree, str):
+            continue
+        if curr_subtree.label() == '-NONE-':
+            null_children_indices.append(curr_tree_index)
+            continue
+        for i in range(len(curr_subtree)):
+            curr_child = curr_subtree[i]
+            if isinstance(curr_child, str):
+                continue
+            if is_null(curr_child):
+                null_children_index = tuple(list(curr_tree_index) + [i])
+                null_children_indices.append(null_children_index)
+                tree_positions = recur_delete(tree_positions, null_children_index)
+        
+    pruned_tree = str(tree)
+    #print(null_children_indices)
+    for null_children_index in null_children_indices: 
+        pruned_tree = pruned_tree.replace(str(tree[null_children_index]), "")
+    return Tree.fromstring(pruned_tree)
+
+train_sent = [prune(sentence) for sentence in train_sent]
+dev_sent = [prune(sentence) for sentence in dev_sent]
+test_sent = [prune(sentence) for sentence in test_sent]
+dev_full_sent = [prune(sentence) for sentence in dev_full_sent]
+
+tree_to_json('train', train_sent)
+print("Finished generating train JSON.")
+tree_to_json('dev', dev_sent)
+print("Finished generating dev JSON.")
+tree_to_json('test', test_sent)
+print("Finished generating test JSON.")
 tree_to_json('dev.full', dev_full_sent)
+print("Finished generating dev.full JSON.")
 
 print("done.")
 print("Converting to JSON takes " + str(time.time() - t_0) + " seconds.")
