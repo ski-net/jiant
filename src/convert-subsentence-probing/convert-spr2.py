@@ -55,7 +55,7 @@ def convert_spr(ud_corpus):
             sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)] =  {
                 "span2" : list(span2),
                 "span1" : list(span1),
-                "labels"  : {},
+                "label"  : {},
                 "info"      : {
                                 "span2_txt" : row['Arg.Phrase'],
                                 "span1_text": sent_text.split()[row['Pred.Token']],
@@ -64,26 +64,30 @@ def convert_spr(ud_corpus):
                                 "pred_lemma": row['Pred.Lemma']
                               }
             }
-        if row['Property'] not in sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["labels"]:
-            sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["labels"][row['Property']] = []
-        sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["labels"][row['Property']].append(row['Response'])
+        if row['Property'] not in sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["label"]:
+            sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["label"][row['Property']] = []
+        sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["label"][row['Property']].append(row['Response'])
         #sent_id2pred_arg_pairs[(split, sent_id)][(span1, span2)]["info"]["applicable"].append(row['Applicable'])
         #sent_id2targets[(split, sent_id)]["targets"].append(target)
 
-    json_objs = []
+    outfiles = {}
     for key in sent_id2targets:
         val = sent_id2targets[key]
         val["text"] = ud_corpus[1][key[0],int(key[1])-1]
         val["info"]["split"] = key[0]
         val["info"]["sent_id"] = key[1]
         for span_pair in sent_id2pred_arg_pairs[key]:
-            labels = sent_id2pred_arg_pairs[key][span_pair]["labels"]
-            sent_id2pred_arg_pairs[key][span_pair]["labels"] = [key for key,val in labels.items() if sum(val) / float(len(val)) >= 4.0 ]
+            labels = sent_id2pred_arg_pairs[key][span_pair]["label"]
+            sent_id2pred_arg_pairs[key][span_pair]["label"] = [key for key,val in labels.items() if sum(val) / float(len(val)) >= 4.0 ]
             val["targets"].append(sent_id2pred_arg_pairs[key][span_pair])
-        json_objs.append(val)
+            #json_objs.append(val)
 
-    with open('spr2_probing.json', 'w') as outfile:
-        json.dump(json_objs, outfile)
+            #for obj in json_objs:
+        data_split = val['info']['split']
+        if data_split not in outfiles:
+            outfiles[data_split] = open("spr2_edge_probing_%s.json" % (data_split), 'w')
+        json.dump(val, outfiles[data_split])
+        outfiles[data_split].write('\n')
 
 def main():
     ud_corpus = get_ud_corpus_data()
