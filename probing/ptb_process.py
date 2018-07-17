@@ -2,7 +2,8 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
-#import ipdb as pdb
+import ipdb as pdb
+
 import nltk
 nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
 
@@ -107,6 +108,8 @@ def sent_to_dict(sentence):
     targets = []
     for index, subtree in enumerate(sentence.subtrees()):
         assoc_words = subtree.leaves()
+        if len(assoc_words) == 0:
+            pdb.set_trace()
         assoc_words = [(i, int(j)) for i, j in assoc_words]
         assoc_words.sort(key=lambda elem: elem[1])
 #        if subtree.label() == "NP" and subtree.leaves()[0][0] != '61' and find_depth(sentence, subtree) == 3:
@@ -125,7 +128,8 @@ def tree_to_json(split, sent_list):
     data = {"data": []}
     num_sent = len(sent_list)
     #may want to parallelize this for loop
-    for sentence in sent_list:
+    for index, sentence in enumerate(sent_list):
+#        print(index)
         data["data"].append(sent_to_dict(sentence))
 
     with open('ptb_' + split + '.json', 'w') as outfile:
@@ -158,6 +162,7 @@ def prune(tree):
     null_children_indices = []
 
     while(len(tree_positions) > 0):
+        tree_positions.sort(key=len)
         curr_tree_index = tree_positions.pop(0)
         if curr_tree_index == ():
             curr_subtree = tree
@@ -179,8 +184,10 @@ def prune(tree):
         
     pruned_tree = str(tree)
     #print(null_children_indices)
-    for null_children_index in null_children_indices: 
-        pruned_tree = pruned_tree.replace(str(tree[null_children_index]), "")
+    prune_keys = [str(tree[index]) for index in null_children_indices]
+    prune_keys.sort(key=len, reverse=True)#Very hacky, perhaps there's a better way to remove branches of a tree
+    for prune_key in prune_keys: 
+        pruned_tree = pruned_tree.replace(prune_key, "")
     return Tree.fromstring(pruned_tree)
 
 train_sent = [prune(sentence) for sentence in train_sent]
