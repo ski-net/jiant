@@ -724,6 +724,41 @@ class QQPTask(PairClassificationTask):
                 'precision': pcs, 'recall': rcl}
 
 
+class QQP1kTask(PairClassificationTask):
+    ''' Task class for Quora Question Pairs. '''
+
+    def __init__(self, path, max_seq_len, name="qqp1k"):
+        super().__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
+            self.val_data_text[0] + self.val_data_text[1]
+        self.scorer2 = F1Measure(1)
+        self.val_metric = "%s_acc_f1" % name
+        self.val_metric_decreases = False
+
+    def load_data(self, path, max_seq_len):
+        '''Process the dataset located at data_file.'''
+        tr_data = load_tsv(os.path.join(path, "train.tsv"), max_seq_len,
+                           s1_idx=3, s2_idx=4, targ_idx=5, skip_rows=1)
+        tr_data = tuple([field[0:1000] for field in tr_data])
+        val_data = load_tsv(os.path.join(path, "dev.tsv"), max_seq_len,
+                            s1_idx=3, s2_idx=4, targ_idx=5, skip_rows=1)
+        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+                           s1_idx=1, s2_idx=2, targ_idx=None, idx_idx=0, skip_rows=1)
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading QQP1k data.")
+
+    def get_metrics(self, reset=False):
+        '''Get metrics specific to the task'''
+        acc = self.scorer1.get_metric(reset)
+        pcs, rcl, f1 = self.scorer2.get_metric(reset)
+        return {'acc_f1': (acc + f1) / 2, 'accuracy': acc, 'f1': f1,
+                'precision': pcs, 'recall': rcl}
+
+
+
 class MultiNLISingleGenreTask(PairClassificationTask):
     ''' Task class for Multi-Genre Natural Language Inference, Fiction genre.'''
 
