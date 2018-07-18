@@ -4,7 +4,6 @@ import sys
 import json
 import logging as log
 import h5py
-# import ipdb as pdb
 
 import numpy
 import torch
@@ -29,6 +28,7 @@ from allennlp.nn import util, InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import remove_sentence_boundaries, add_sentence_boundary_token_ids, get_device_of
 from allennlp.modules.text_field_embedders import BasicTextFieldEmbedder
 from allennlp.modules.token_embedders import Embedding
+from allennlp.modules.elmo_lstm import ElmoLstm
 from allennlp.data.token_indexers.elmo_indexer import ELMoCharacterMapper, ELMoTokenCharactersIndexer
 from allennlp.modules.similarity_functions import LinearSimilarity, DotProductSimilarity
 from allennlp.modules.seq2vec_encoders import BagOfEmbeddingsEncoder, CnnEncoder
@@ -50,7 +50,7 @@ class SentenceEncoder(Model):
 
     def __init__(self, vocab, text_field_embedder, num_highway_layers, phrase_layer,
                  skip_embs=True, cove_layer=None, dropout=0.2, mask_lstms=True,
-                 initializer=InitializerApplicator()):
+                 sep_embs_for_skip=False, initializer=InitializerApplicator()):
         super(SentenceEncoder, self).__init__(vocab)
 
         if text_field_embedder is None:
@@ -66,6 +66,7 @@ class SentenceEncoder(Model):
         self._cove = cove_layer
         self.pad_idx = vocab.get_token_index(vocab._padding_token)
         self.skip_embs = skip_embs
+        self.sep_embs_for_skip = sep_embs_for_skip
         self.output_dim = phrase_layer.get_output_dim() + (skip_embs * d_inp_phrase)
 
         if dropout > 0:
@@ -76,7 +77,7 @@ class SentenceEncoder(Model):
 
         initializer(self)
 
-    def forward(self, sent):
+    def forward(self, sent, task):
         # pylint: disable=arguments-differ
         """
         Args:
@@ -85,92 +86,42 @@ class SentenceEncoder(Model):
         Returns:
             - sent_enc (torch.FloatTensor): (b_size, seq_len, d_emb)
         """
+        # embeddings
         sent_embs = self._highway_layer(self._text_field_embedder(sent))
+        task_sent_embs = self._highway_layer(self._text_field_embedder(sent, task.name))
         if self._cove is not None:
             sent_lens = torch.ne(sent['words'], self.pad_idx).long().sum(dim=-1).data
             sent_cove_embs = self._cove(sent['words'], sent_lens)
             sent_embs = torch.cat([sent_embs, sent_cove_embs], dim=-1)
+            task_sent_embs = torch.cat([task_sent_embs, sent_cove_embs], dim=-1)
         sent_embs = self._dropout(sent_embs)
-
+        task_sent_embs = self._dropout(task_sent_embs)
+        
+        # the rest of the model
         sent_mask = util.get_text_field_mask(sent).float()
         sent_lstm_mask = sent_mask if self._mask_lstms else None
-
         sent_enc = self._phrase_layer(sent_embs, sent_lstm_mask)
+
+        # ELMoLSTM returns all layers, we just want to use the top layer
+        if isinstance(self._phrase_layer, BiLMEncoder):
+            sent_enc = sent_enc[-1]
         sent_enc = self._dropout(sent_enc)
         if self.skip_embs:
-            sent_enc = torch.cat([sent_enc, sent_embs], dim=-1)
+            if self.sep_embs_for_skip:
+                sent_enc = torch.cat([sent_enc, task_sent_embs], dim=-1)
+            else:
+                sent_enc = torch.cat([sent_enc, sent_embs], dim=-1)
 
         sent_mask = sent_mask.unsqueeze(dim=-1)
         return sent_enc, sent_mask
 
+class BiLMEncoder(ElmoLstm):
+    ''' Wrapper around BiLM to give it an interface to comply with SentEncoder '''
+    def get_input_dim(self):
+        return self.input_size
 
-class BiLMEncoder(SentenceEncoder):
-    ''' Given a sequence of tokens, embed each token and pass thru an LSTM
-    A simple wrap up for bidirectional LM training
-    '''
-
-    def __init__(self, vocab, text_field_embedder, num_highway_layers,
-                 phrase_layer, bwd_phrase_layer, skip_embs=True,
-                 cove_layer=None, dropout=0.2, mask_lstms=True,
-                 initializer=InitializerApplicator()):
-        super(
-            BiLMEncoder,
-            self).__init__(
-            vocab,
-            text_field_embedder,
-            num_highway_layers,
-            phrase_layer,
-            skip_embs,
-            cove_layer,
-            dropout,
-            mask_lstms,
-            initializer)
-        self._bwd_phrase_layer = bwd_phrase_layer
-        self.output_dim *= 2
-        initializer(self)
-
-    def _uni_directional_forward(self, sent, go_forward=True):
-        sent_embs = self._highway_layer(self._text_field_embedder(sent))
-        if self._cove is not None:
-            sent_lens = torch.ne(sent['words'], self.pad_idx).long().sum(dim=-1).data
-            sent_cove_embs = self._cove(sent['words'], sent_lens)
-            sent_embs = torch.cat([sent_embs, sent_cove_embs], dim=-1)
-        sent_embs = self._dropout(sent_embs)
-
-        sent_mask = util.get_text_field_mask(sent).float()
-        sent_lstm_mask = sent_mask if self._mask_lstms else None
-
-        if go_forward:
-            sent_enc = self._phrase_layer(sent_embs, sent_lstm_mask)
-        else:
-            sent_enc = self._bwd_phrase_layer(sent_embs, sent_lstm_mask)
-        sent_enc = self._dropout(sent_enc)
-        if self.skip_embs:
-            sent_enc = torch.cat([sent_enc, sent_embs], dim=-1)
-
-        sent_mask = sent_mask.unsqueeze(dim=-1)
-        return sent_enc, sent_mask
-
-    def forward(self, sent, bwd_sent=None):
-        # pylint: disable=arguments-differ
-        """
-        Args:
-            - sent (Dict[str, torch.LongTensor]): From a ``TextField``.
-
-        Returns:
-            - sent_enc (torch.FloatTensor): (b_size, seq_len, d_emb)
-        """
-        # TODO(Alex): bwd_sent_enc is likely flipped? shouldn't concatenate
-        # The masks should be the same though
-        fwd_sent_enc, fwd_sent_mask = self._uni_directional_forward(sent)
-        if bwd_sent is not None:
-            bwd_sent_enc, _ = self._uni_directional_forward(bwd_sent, False)
-            sent_enc = torch.cat([fwd_sent_enc, bwd_sent_enc], dim=-1)
-        else:
-            sent_enc = fwd_sent_enc
-
-        return sent_enc, fwd_sent_mask
-
+    def get_output_dim(self):
+        return self.hidden_size * 2
 
 class BoWSentEncoder(Model):
     def __init__(self, vocab, text_field_embedder, initializer=InitializerApplicator()):
@@ -549,7 +500,7 @@ class MaskedStackedSelfAttentionEncoder(Seq2SeqEncoder):
                    num_attention_heads=num_attention_heads,
                    use_positional_encoding=use_positional_encoding,
                    dropout_prob=dropout_prob)
-
+    
 
 class ElmoCharacterEncoder(torch.nn.Module):
     """
@@ -790,15 +741,15 @@ class CNNEncoder(Model):
         super(CNNEncoder, self).__init__(model_name)
         self.model_name = model_name
         self.model = self._load_model(model_name)
-        
-        
+
+
         # New loader
         '''
         self.feat_dict = self._load_features_from_json(path, 'train')
         self.feat_dict.update(self._load_features_from_json(path, 'val'))
         self.feat_dict.update(self._load_features_from_json(path, 'test'))
         '''
-        
+
         '''
         # Old loader
         self.feat_dict = self._load_features(path, 'train')
@@ -827,9 +778,9 @@ class CNNEncoder(Model):
             f = open('/nfs/jsalt/home/roma/CNN/' + dataset + '.json', 'r')
             for line in f:
                 feat_dict = json.loads(line)
-                
+
         return feat_dict
-    
+
     def _load_features(self, path, dataset):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
@@ -869,4 +820,3 @@ class CNNEncoder(Model):
         f = open('/nfs/jsalt/home/roma/CNN/feat/' + str(img_id) + '.json', 'r')
         for line in f: feat_dict = json.loads(line)
         return feat_dict['feat']
-
