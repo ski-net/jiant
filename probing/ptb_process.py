@@ -93,6 +93,16 @@ def find_depth(tree, subtree):
             return len(indices)
     raise runtime_error('something is wrong with implementation of find_depth')
 
+#fxn_tags = ['ADV', 'NOM', 'DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC', 'BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP', 'CLR', 'CLF', 'HLN', 'TTL']
+
+form_function_discrepancies = ['ADV', 'NOM']
+grammatical_rule = ['DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC']
+adverbials = ['BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP']
+miscellaneous = ['CLR', 'CLF', 'HLN', 'TTL']
+
+punctuations = ['-LRB-', '-RRB-', '-LCB-', '-RCB-', '-LSB-', '-RSB-']
+#special_labels = ['PRP-S', 'WP-S']
+
 #function converting Tree object to dictionary compatible with common JSON format
 def sent_to_dict(sentence):
     json_d = {}
@@ -108,14 +118,26 @@ def sent_to_dict(sentence):
     targets = []
     for index, subtree in enumerate(sentence.subtrees()):
         assoc_words = subtree.leaves()
-#        if len(assoc_words) == 0:
-#            pdb.set_trace()
         assoc_words = [(i, int(j)) for i, j in assoc_words]
         assoc_words.sort(key=lambda elem: elem[1])
-#        if subtree.label() == "NP" and subtree.leaves()[0][0] != '61' and find_depth(sentence, subtree) == 3:
-#            pdb.set_trace()
-        targets.append({"span1":[int(assoc_words[0][1]), int(assoc_words[-1][1]) + 1], "label":subtree.label(), "height": subtree.height() - 1, \
-                        "depth": find_depth(sentence, subtree)})
+        tmp_tag_list = subtree.label().replace('=', '-').replace('|', '-').split('-')
+        label = tmp_tag_list[0]
+        if tmp_tag_list[-1].isdigit(): #Getting rid of numbers at the end of each tag
+            fxn_tgs = tmp_tag_list[1:-1]
+        else:
+            fxn_tgs = tmp_tag_list[1:]
+        #Special cases:
+        if len(tmp_tag_list) > 1 and tmp_tag_list[1] == 'S': #Case when we have 'PRP-S' or 'WP-S'
+            label = tmp_tag_list[0] + '-' + tmp_tag_list[1]
+            fxn_tgs = tmp_tag_list[2:-1] if tmp_tag_list[-1].isdigit() else tmp_tag_list[2:]
+        if subtree.label() in punctuations: #Case when we have one of the strange punctions, such as round brackets
+            label, fxn_tgs = subtree.label(), []
+        targets.append({"span1":[int(assoc_words[0][1]), int(assoc_words[-1][1]) + 1], "label": label, \
+                        "info": {"height": subtree.height() - 1, "depth": find_depth(sentence, subtree), \
+                        "form_function_discrepancies": list(set(fxn_tgs).intersection(set(form_function_discrepancies))), \
+                        "grammatical_rule": list(set(fxn_tgs).intersection(set(grammatical_rule))), \
+                        "adverbials": list(set(fxn_tgs).intersection(set(adverbials))), \
+                        "miscellaneous": list(set(fxn_tgs).intersection(set(miscellaneous)))}})
     json_d["targets"] = targets
     
     json_d["info"] = {"source": "PTB"}
