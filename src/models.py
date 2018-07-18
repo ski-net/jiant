@@ -657,7 +657,6 @@ class MultiTaskModel(nn.Module):
             task.scorer1(math.exp(out['loss'].item()))
 
             if not self.training:
-                # bleu scoring
                 bleu_score = beamsearch.generate_and_compute_bleu(decoder, sent, sent_mask, batch['targs'])
                 task.scorer2(bleu_score)
 
