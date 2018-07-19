@@ -11,3 +11,13 @@ mkdir recast1
 cd recast1
 wget http://decomp.net/wp-content/uploads/2017/11/inference_is_everything.zip
 unzip inference_is_everything
+
+#NER
+wget http://gmb.let.rug.nl/releases/gmb-2.2.0.zip
+unzip gmb-2.2.0.zip
+
+git clone https://github.com/synalp/NER.git
+mkdir CoNLL-2003
+cp NER/corpus/CoNLL-2003/* CoNLL-2003
+rm -rf NER/
+
