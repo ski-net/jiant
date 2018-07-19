@@ -603,6 +603,34 @@ class BWBLMTask(LanguageModelingTask):
                     continue
                 yield process_sentence(toks, self.max_seq_len)
 
+class RedditLMTask(LanguageModelingTask):
+    ''' Language modeling task on Reddit'''
+
+    def __init__(self, path, max_seq_len, name="reddit_lm"):
+        super().__init__(path, max_seq_len, name)
+        print("LOADING REDDIT DATA FROM A DIFF LOCATION COMPARED TO REST OF THE TEAM. PLEASE CHANGE")
+        path = '//nfs/jsalt/home/raghu/'
+        self.files_by_split = {'train': os.path.join(path, "train_2008_Random.csv"),
+                               'val': os.path.join(path, "dev_2008_Random.csv"),
+                               'test':os.path.join(path, "dev_2008_Random.csv")}
+
+    def count_examples(self):
+        ''' Compute here b/c we're streaming the sentences. '''
+        example_counts = {}
+        for split, split_path in self.files_by_split.items():
+            #example_counts[split] = len(open(split_path).read().count('\n'))
+            example_counts[split] = 2 * sum(1 for line in open(split_path))
+        self.example_counts = example_counts
+
+    def load_data(self, path):
+        with open(path) as txt_fh:
+            for row in txt_fh:
+                csv_list = row.strip().split('\t')
+                for toks in csv_list[2:]:
+                    if toks == '':
+                        continue
+                    yield process_sentence(toks, self.max_seq_len)
+
 class SSTTask(SingleClassificationTask):
     ''' Task class for Stanford Sentiment Treebank.  '''
 
