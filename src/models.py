@@ -278,11 +278,8 @@ def build_module(task, model, d_sent, d_emb, vocab, embedder, args):
         module = edge_probing.EdgeClassifierModule(task, d_sent, task_params)
         setattr(model, '%s_mdl' % task.name, module)
     elif isinstance(task, (MTTask, Reddit_MTTask)):
-<<<<<<< HEAD
-=======
         attention = args.get("mt_attention", "bilinear")
         log.info("using {} attention".format(attention))
->>>>>>> master
         decoder_params = Params({'input_dim': d_sent,
                                  'target_embedding_dim': 300,
                                  'max_decoding_steps': 200,
