@@ -356,7 +356,7 @@ def build_reddit_module(task, d_inp, params):
 
 def build_image_sent_module(task, d_inp, params):
     ### change for pair
-    pooler = Pooler.from_params(3072, 512)
+    pooler = Pooler.from_params(d_inp, params['d_proj'])
     return pooler
 
 def build_single_sentence_module(task, d_inp, params):
