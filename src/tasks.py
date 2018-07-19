@@ -1407,6 +1407,7 @@ class GroundedTask(Task):
         self.loss_fn = nn.CosineEmbeddingLoss()
         self.metric_fn = nn.CosineSimilarity(dim=1, eps=1e-6)
         self.val_metric_decreases = False
+        self.dataset = 'mscoco/grounded' # 'abstract' 'mscoco/grounded' or 'shapeworld'
 
     def _compute_metric(self, metric_name, tensor1, tensor2):
         '''Metrics for similarity in image space'''
@@ -1458,7 +1459,7 @@ class GroundedTask(Task):
 
         ''' Abstract Scenes data '''
         def get_data(dataset, data):
-            f = open("/nfs/jsalt/home/roma/" dataset + ".tsv", 'r')
+            f = open("/nfs/jsalt/home/roma/" + dataset + ".tsv", 'r')
             for line in f:
                 items = line.strip().split('\t')
                 if len(items) < 3 or items[1] == '0': continue
@@ -1466,19 +1467,25 @@ class GroundedTask(Task):
                 data[1].append(int(items[1]))
                 data[2].append(int(items[2]))
             return data
-
+        
+        '''
         train = get_data('abstract/train_temp', train)
         val = get_data('abstract/val_temp', val)
         test = get_data('abstract/test_temp', test)
-
+        self.dataset = 'abstract'
+        '''
+        
         ''' ShapeWorld data '''
 
+        '''
         train = get_data('shapeworld/train', train)
         val = get_data('shapeworld/val', val)
         test = get_data('shapeworld/test', test)
+        self.dataset = 'shapeworld'
+        '''
         
- 
         ''' MSCOCO data '''
+
         
         train_ids = [item for item in os.listdir(os.path.join(path, "train")) if '.DS' not in item]
         val_ids = [item for item in os.listdir(os.path.join(path, "val")) if '.DS' not in item]
@@ -1511,7 +1518,9 @@ class GroundedTask(Task):
                 test[0].append(te_dict[img_id]['captions'][caption_id])
                 test[1].append(1)
                 test[2].append(int(img_id))
-
+        self.dataset = 'mscoco/grounded'
+        
+        
         log.info("Positive train samples: " + str(len(train[0])))
         #np.random.shuffle(train); np.random.shuffle(test); np.random.shuffle(val)
         log.info("All train samples: " + str(len(train[0])))
@@ -1523,7 +1532,7 @@ class GroundedTask(Task):
         self.val_data_text = val
         self.test_data_text = test
         log.info('Train: ' + str(len(train)) + ' , Val: ' + str(len(val)) + ', Test: ' + str(len(test)))
-        log.info("\tFinished loading MSCOCO data.")
+        log.info("\tFinished loading image data.")
 
 class VAETask(SequenceGenerationTask):
     '''Variational Autoencoder (with corrupted input) Task'''
