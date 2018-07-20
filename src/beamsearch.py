@@ -138,6 +138,7 @@ def beam_search(decoder, encoder_outputs, encoder_outputs_mask, beam_size=BEAM_S
 
     trg_h_t, trg_c_t = decoder._initalize_hidden_context_states(
         encoder_outputs, encoder_outputs_mask)
+    encoder_outputs_maxpool = trg_c_t.clone()
 
     max_trg_length = decoder._max_decoding_steps
 
@@ -163,10 +164,12 @@ def beam_search(decoder, encoder_outputs, encoder_outputs_mask, beam_size=BEAM_S
         # need to repeat inside since update_active()
         encoder_outputs_beam = encoder_outputs.repeat(beam_size, 1, 1)
         encoder_outputs_mask_beam = encoder_outputs_mask.repeat(beam_size, 1, 1)
+        encoder_outputs_maxpool_beam = encoder_outputs_maxpool.repeat(beam_size, 1)
         decoder_input = decoder._prepare_decode_step_input(
             input_indices=input_indices,
             decoder_hidden_state=dec_states[0],
             encoder_outputs=encoder_outputs_beam,
+            encoder_outputs_maxpool=encoder_outputs_maxpool_beam,
             encoder_outputs_mask=encoder_outputs_mask_beam,
         )
 
@@ -223,6 +226,7 @@ def beam_search(decoder, encoder_outputs, encoder_outputs_mask, beam_size=BEAM_S
             return t.index_select(0, active_idx)
         encoder_outputs = update_active_encoder_out(encoder_outputs)
         encoder_outputs_mask = update_active_encoder_out(encoder_outputs_mask)
+        encoder_outputs_maxpool = update_active_encoder_out(encoder_outputs_maxpool)
 
         remaining_sents = len(active)
 

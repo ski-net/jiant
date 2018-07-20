@@ -10,6 +10,7 @@ import torch
 from torch.nn.modules.rnn import LSTMCell
 from torch.nn.modules.linear import Linear
 import torch.nn.functional as F
+import torch.nn as nn
 
 from allennlp.common import Params
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
@@ -20,6 +21,12 @@ from allennlp.modules.similarity_functions import SimilarityFunction
 from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits, weighted_sum
+
+
+class MaxpoolAttention(nn.Module):
+
+    def forward(self, decoder_hidden_state, encoder_outputs_maxpool):
+        return encoder_outputs_maxpool
 
 
 class Seq2SeqDecoder(Model):
@@ -33,7 +40,7 @@ class Seq2SeqDecoder(Model):
                  max_decoding_steps: int,
                  target_namespace: str = "targets",
                  target_embedding_dim: int = None,
-                 attention: str = "none",
+                 attention: str = "maxpool",
                  dropout: float = 0.0,
                  scheduled_sampling_ratio: float = 0.0) -> None:
         super(Seq2SeqDecoder, self).__init__(vocab)
@@ -56,12 +63,17 @@ class Seq2SeqDecoder(Model):
         self._target_embedding_dim = target_embedding_dim
         self._target_embedder = Embedding(num_classes, self._target_embedding_dim)
 
-        if attention == "bilinear":
+        self._attention_type = attention
+        if self._attention_type == "bilinear":
             self._decoder_attention = BilinearAttention(input_dim, input_dim)
             # The output of attention, a weighted average over encoder outputs, will be
             # concatenated to the input vector of the decoder at each time step.
             self._decoder_input_dim = input_dim + target_embedding_dim
-        elif attention == "none":
+        elif self._attention_type == "maxpool":
+            self._decoder_attention = MaxpoolAttention()
+            self._encoder_hidden_dim = self._decoder_hidden_dim  # this is totally by assumption (sorry it's a mess), assert in beamsearch.py
+            self._decoder_input_dim = self._encoder_hidden_dim + target_embedding_dim
+        elif self._attention_type == "none":
             self._decoder_input_dim = target_embedding_dim
         else:
             raise Exception("attention not implemented {}".format(attention))
@@ -110,13 +122,19 @@ class Seq2SeqDecoder(Model):
         decoder_hidden, decoder_context = self._initalize_hidden_context_states(
             encoder_outputs, encoder_outputs_mask)
 
+        # freeze a copy of encoder_outputs_maxpool - really hacky, sorry
+        encoder_outputs_maxpool = decoder_context.clone()
+
         step_logits = []
 
         for timestep in range(num_decoding_steps):
             input_choices = targets[:, timestep]
             decoder_input = self._prepare_decode_step_input(
                 input_choices, decoder_hidden,
-                encoder_outputs, encoder_outputs_mask)
+                encoder_outputs=encoder_outputs,
+                encoder_outputs_maxpool=encoder_outputs_maxpool,
+                encoder_outputs_mask=encoder_outputs_mask,
+            )
             decoder_hidden, decoder_context = self._decoder_cell(
                 decoder_input, (decoder_hidden, decoder_context))
 
@@ -155,6 +173,7 @@ class Seq2SeqDecoder(Model):
             input_indices: torch.LongTensor,
             decoder_hidden_state: torch.LongTensor = None,
             encoder_outputs: torch.LongTensor = None,
+            encoder_outputs_maxpool: torch.LongTensor = None,
             encoder_outputs_mask: torch.LongTensor = None) -> torch.LongTensor:
         """
         Given the input indices for the current timestep of the decoder, and all the encoder
@@ -189,22 +208,29 @@ class Seq2SeqDecoder(Model):
             # complain.
             # Fixme
 
-            # important - need to use zero-masking instead of -inf for attention
-            # I've checked that doing this doesn't significantly increase time
-            # per batch, but should consider only doing once
-            encoder_outputs.data.masked_fill_(
-                1 - encoder_outputs_mask.byte().data, 0.0)
-
-            encoder_outputs = 0.5 * encoder_outputs
-            encoder_outputs_mask = encoder_outputs_mask.float()
-            encoder_outputs_mask = encoder_outputs_mask[:, :, 0]
             # (batch_size, input_sequence_length)
-            input_weights = self._decoder_attention(
-                decoder_hidden_state, encoder_outputs, encoder_outputs_mask)
-            # (batch_size, encoder_output_dim)
-            attended_input = weighted_sum(encoder_outputs, input_weights)
+            if self._attention_type == 'bilinear':
+                # important - need to use zero-masking instead of -inf for attention
+                # I've checked that doing this doesn't significantly increase time
+                # per batch, but should consider only doing once
+                encoder_outputs.data.masked_fill_(
+                    1 - encoder_outputs_mask.byte().data, 0.0)
+
+                encoder_outputs = 0.5 * encoder_outputs
+                encoder_outputs_mask = encoder_outputs_mask.float()
+                encoder_outputs_mask = encoder_outputs_mask[:, :, 0]
+                input_weights = self._decoder_attention(
+                    decoder_hidden_state, encoder_outputs, encoder_outputs_mask)
+                # (batch_size, encoder_output_dim)
+                attended_input = weighted_sum(encoder_outputs, input_weights)
+            elif self._attention_type == 'maxpool':
+                attended_input = self._decoder_attention(decoder_hidden_state, encoder_outputs_maxpool)
+            else:
+                raise Exception("_prepare_decode_step_input error {}".format(self._attention_type))
+
             # (batch_size, encoder_output_dim + target_embedding_dim)
             return torch.cat((attended_input, embedded_input), -1)
+
         else:
             return embedded_input
 
