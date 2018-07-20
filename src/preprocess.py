@@ -34,7 +34,7 @@ from .tasks import \
     JOCITask, PairOrdinalRegressionTask, WeakGroundedTask, \
     GroundedTask, MTTask, BWBLMTask, WikiInsertionsTask, \
     NLITypeProbingTask, MultiNLIAltTask, VAETask, \
-    RedditTask, Reddit_MTTask
+    RedditTask, Reddit_MTTask, MTdata_Classification
 from .tasks import \
     RecastKGTask, RecastLexicosynTask, RecastWinogenderTask, \
     RecastFactualityTask, RecastSentimentTask, RecastVerbcornerTask, \
@@ -42,6 +42,7 @@ from .tasks import \
     MultiNLIFictionTask, MultiNLISlateTask, MultiNLIGovernmentTask, \
     MultiNLITravelTask, MultiNLITelephoneTask
 from .tasks import POSTaggingTask, CCGTaggingTask
+
 
 ALL_GLUE_TASKS = ['sst', 'cola', 'mrpc', 'qqp', 'sts-b',
                   'mnli', 'qnli', 'rte', 'wnli']
@@ -97,6 +98,7 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'recast-sentiment': (RecastSentimentTask, 'DNC/recast_sentiment_data'),
              'recast-verbcorner': (RecastVerbcornerTask, 'DNC/recast_verbcorner_data'),
              'recast-verbnet': (RecastVerbnetTask, 'DNC/recast_verbnet_data'),
+             'MT-data-classif': (MTdata_Classification, 'wmt14_en_de'),
              }
 # Add any tasks registered in tasks.py
 NAME2INFO.update(tasks_module.REGISTRY)

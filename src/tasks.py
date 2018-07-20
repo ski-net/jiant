@@ -749,6 +749,42 @@ class Reddit_MTTask(SequenceGenerationTask):
         return {'perplexity': ppl}
 
 
+class MTdata_Classification(RankingTask):
+    ''' Task class for MT data in classification setting '''
+    def __init__(self, path, max_seq_len, name="MT-data-classif"):
+        ''' '''
+        super(MTdata_Classification, self).__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.train_data_text[1]  + self.val_data_text[0] + self.val_data_text[1]
+        self.scorer1 = Average() #CategoricalAccuracy()
+        self.scorer2 = None
+        self.val_metric = "%s_accuracy" % self.name
+        self.val_metric_decreases = False
+
+    def load_data(self, path, max_seq_len):
+        ''' Load data '''
+        print("Loading data")
+        tr_data = load_tsv(os.path.join(path, 'train.txt'), max_seq_len,
+                           s1_idx=0, s2_idx=1, targ_idx=None, skip_rows=0)
+        dev_data = load_tsv(os.path.join(path, 'valid.txt'), max_seq_len,
+                           s1_idx=0, s2_idx=1, targ_idx=None, skip_rows=0)
+        test_data = load_tsv(os.path.join(path, 'test.txt'), max_seq_len,
+                           s1_idx=0, s2_idx=1, targ_idx=None, skip_rows=0)
+        self.train_data_text = tr_data
+        self.val_data_text = dev_data
+        self.test_data_text = test_data
+        log.info("\tFinished loading MT data for classification")
+
+    def process_split(self, split, indexers) -> Iterable[Type[Instance]]:
+        ''' Process split text into a list of AllenNLP Instances. '''
+        return process_single_pair_task_split(split, indexers, is_pair=True)
+
+    def get_metrics(self, reset=False):
+        '''Get metrics specific to the task'''
+        acc = self.scorer1.get_metric(reset)
+        return {'accuracy': acc}
+
+
 class CoLATask(SingleClassificationTask):
     '''Class for Warstdadt acceptability task'''
 

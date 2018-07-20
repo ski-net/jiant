@@ -36,7 +36,7 @@ from .tasks import STSBTask, CoLATask, SSTTask, \
     PairRegressionTask, RankingTask, \
     SequenceGenerationTask, LanguageModelingTask, \
     PairOrdinalRegressionTask, JOCITask, WeakGroundedTask, \
-    GroundedTask, MTTask, RedditTask, Reddit_MTTask
+    GroundedTask, MTTask, RedditTask, Reddit_MTTask, MTdata_Classification
 
 from .tasks import STSBTask, CoLATask, \
     ClassificationTask, PairClassificationTask, SingleClassificationTask, \
@@ -623,7 +623,7 @@ class MultiTaskModel(nn.Module):
         # balancing pairs: #positive_pairs = batch_size, #negative_pairs = batch_size-1
         cos_simi_pos = torch.diag(cos_simi)
         cos_simi_neg = torch.diag(cos_simi, diagonal=1)
-        cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0)
+        cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0).cuda()
         labels_pos = torch.diag(labels)
         labels_neg = torch.diag(labels, diagonal=1)
         labels = torch.cat([labels_pos, labels_neg], dim=0)
