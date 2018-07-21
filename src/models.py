@@ -612,8 +612,8 @@ class MultiTaskModel(nn.Module):
         out = {}
 
         # feed forward inputs through shared sentence encoder and pooler
-        context_sent, context_mask = self.sent_encoder(batch['input1'])
-        pos_sent, pos_mask = self.sent_encoder(batch['input2'])
+        context_sent, context_mask = self.sent_encoder(batch['input1'], task)
+        pos_sent, pos_mask = self.sent_encoder(batch['input2'], task)
         sent_pooler = getattr(self, "%s_mdl" % task.name)
         sent_dnn = getattr(self, "%s_Response_mdl" % task.name)
         context_sent_rep = sent_pooler(context_sent, context_mask)

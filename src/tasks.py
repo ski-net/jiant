@@ -647,9 +647,7 @@ class RedditTask(ContrastiveRankingTask):
     def __init__(self, path, max_seq_len, name="reddit"):
         ''' '''
         super(RedditTask, self).__init__(name=name, n_choices=2)
-        self.load_data(path, max_seq_len)
-        self.sentences = self.train_data_text[0] + self.train_data_text[1]  + self.val_data_text[0] + self.val_data_text[1]
-        #:pdb.set_trace()
+        self.load_data(path)
         self.scorer1 = Average() #CategoricalAccuracy()
         self.scorer2 = None
         self.val_metric = "%s_accuracy" % self.name
