@@ -481,7 +481,16 @@ class SamplingMultiTaskTrainer():
                 validate_bandit_losses = np.array(self._validate_bandit(tasks, batch_size))/self.bandit.val_batch
                 log.info("  loss: " + np.array_str(validate_bandit_losses,precision =4))
                 # negative average valiation loss of all trained tasks
-                reward = -np.mean(validate_bandit_losses)
+
+                ## new reward ##
+                current  =  -np.sum(validate_bandit_losses)
+                try: gain =  current - prev
+                except NameError: gain =  0
+                prev = current
+                reward = gain
+                # reward = -np.mean(validate_bandit_losses)
+                ## new reward ##
+
                 self.bandit.update_actionValue(reward)
 
                 log.info ("Reward: %.6f", reward)
