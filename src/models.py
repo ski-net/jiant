@@ -44,9 +44,9 @@ from .tasks import STSBTask, CoLATask, \
     SequenceGenerationTask, LanguageModelingTask, MTTask, \
     PairOrdinalRegressionTask, JOCITask, \
     WeakGroundedTask, GroundedTask, VAETask, \
-    GroundedTask, TaggingTask, POSTaggingTask, CCGTaggingTask
+    GroundedTask, TaggingTask, POSTaggingTask, CCGTaggingTask, \
+    ContrastiveRankingTask
 from .tasks import EdgeProbingTask
-
 from .modules import SentenceEncoder, BoWSentEncoder, \
     AttnPairEncoder, MaskedStackedSelfAttentionEncoder, \
     BiLMEncoder, ElmoCharacterEncoder, Classifier, Pooler, \
@@ -497,6 +497,8 @@ class MultiTaskModel(nn.Module):
             out = self._seq_gen_forward(batch, task, predict)
         elif isinstance(task, GroundedTask):
             out = self._grounded_classification_forward(batch, task, predict)
+        elif isinstance(task, ContrastiveRankingTask):
+            out = self._contrastive_sampling_forward(batch, task, predict)
         elif isinstance(task, RankingTask):
             out = self._ranking_forward(batch, task, predict)
         else:
@@ -600,6 +602,61 @@ class MultiTaskModel(nn.Module):
                 _, out['preds'] = logits.max(dim=1)
         return out
 
+    def _contrastive_sampling_forward(self, batch, task, predict):
+        ''' Classification based on triplet of sentences
+        {context, positive, negative}. Currently only samples negative samples
+        from within batch, and exactly one per example. Assumes batch is random
+        data is shuffled. This is probably not the optimal way to do this, should
+        do it at batching stage. https://openreview.net/forum?id=rJvJXZb0W
+        '''
+        out = {}
+
+        # feed forward inputs through shared sentence encoder and pooler
+        context_sent, context_mask = self.sent_encoder(batch['input1'])
+        pos_sent, pos_mask = self.sent_encoder(batch['input2'])
+        sent_pooler = getattr(self, "%s_mdl" % task.name)
+        sent_dnn = getattr(self, "%s_Response_mdl" % task.name)
+        context_sent_rep = sent_pooler(context_sent, context_mask)
+        sent_pool = sent_pooler(pos_sent, pos_mask)
+
+        # negative sampling, assumes shuffled
+        bs = sent_pool.size()[0]
+        sent1_pool = torch.zeros_like(sent_pool)
+        sent2_pool = torch.zeros_like(sent_pool)
+
+        def _shift(range_in):  # shift range by one for the negative idx
+            return list(range_in)[1:] + [range_in[0]]
+
+        sent1_pool[:int(bs/2)] = sent_pool[:int(bs/2)]
+        sent1_pool[int(bs/2):] = sent_pool[_shift(range(int(bs/2), bs))]
+        sent2_pool[:int(bs/2)] = sent_pool[_shift(range(int(bs/2)))]
+        sent2_pool[int(bs/2):] = sent_pool[int(bs/2):]
+        labels = torch.zeros(bs); labels[int(bs/2):] = 1
+        sent1_pool = sent1_pool.cuda()
+        sent2_pool = sent2_pool.cuda()
+        labels = labels.type(torch.LongTensor).cuda()
+
+        # concatenate all features together
+        classifier = getattr(self, "%s_classifier" % task.name)
+        logits = classifier(torch.cat([
+            context_sent_rep,
+            sent1_pool,
+            sent2_pool,
+            torch.abs(context_sent_rep - sent1_pool),
+            context_sent_rep * sent1_pool,
+            torch.abs(context_sent_rep - sent2_pool),
+            context_sent_rep * sent2_pool,
+        ], 1))
+
+        # compute loss
+        out['loss'] = F.cross_entropy(logits, labels)
+        _, preds = logits.max(dim=1)
+        total_correct = torch.sum(preds == labels)
+        batch_acc = total_correct.item()/len(labels)
+        out["n_exs"] = len(labels)
+        task.scorer1(batch_acc)
+
+        return out
 
     def _ranking_forward(self, batch, task, predict):
         ''' For caption and image ranking. This implementation is intended for Reddit'''
@@ -638,6 +695,47 @@ class MultiTaskModel(nn.Module):
         out["n_exs"] = len(labels)
         task.scorer1(batch_acc)
 
+        #import ipdb as pdb; pdb.set_trace()
+        if 1:
+            sent1_rep = sent1_rep/sent1_rep.norm(dim=1)[:, None]
+            sent2_rep = sent2_rep/sent2_rep.norm(dim=1)[:, None]
+            cos_simi = torch.mm(sent1_rep, sent2_rep.transpose(0,1))
+            labels = torch.eye(len(cos_simi))
+
+            ## The following commented code can be used when we want to use only some pairs instead of all possible pairs
+            #scale = 1/(len(cos_simi) - 1)
+            #weights = scale * torch.ones(cos_simi.shape) - (scale-1) * torch.eye(len(cos_simi))
+            #weights = weights.view(-1).cuda()
+            #import ipdb as pdb; pdb.set_trace()
+
+            ## taking all the pairs positive and negative
+            #cos_simi = cos_simi.view(-1)
+            #labels = labels.view(-1).cuda()
+            #pred = F.sigmoid(cos_simi).round()
+
+            ## taking only positive pairs
+            #cos_simi = torch.diagonal(cos_simi)
+            #labels = torch.ones(cos_simi.shape).cuda()
+            #import ipdb as pdb; pdb.set_trace()
+
+            # balancing pairs: #positive_pairs = batch_size, #negative_pairs = batch_size-1
+            cos_simi_pos = torch.diag(cos_simi)
+            cos_simi_neg = torch.diag(cos_simi, diagonal=1)
+            cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0)
+            labels_pos = torch.diag(labels)
+            labels_neg = torch.diag(labels, diagonal=1)
+            labels = torch.cat([labels_pos, labels_neg], dim=0)
+            labels = labels.cuda()
+            #total_loss = torch.nn.BCEWithLogitsLoss(weight=weights)(cos_simi, labels)
+            total_loss = torch.nn.BCEWithLogitsLoss()(cos_simi, labels)
+            out['loss'] = total_loss
+
+            pred = F.sigmoid(cos_simi).round()
+            total_correct = torch.sum(pred == labels)
+            batch_acc = total_correct.item()/len(labels)
+            out["n_exs"] = len(labels)
+            task.scorer1(batch_acc)
+            #import ipdb as pdb; pdb.set_trace()
         return out
 
 

@@ -13,7 +13,7 @@ col_order = ['date', 'train_tasks', 'dropout', 'elmo', 'cola_mcc', 'sst_accuracy
 
 today = datetime.datetime.now()
 
-# looking at all lines is overkill, but just in case we change the format later, 
+# looking at all lines is overkill, but just in case we change the format later,
 # or if there is more junk after the eval line
 
 for path in sys.argv[1:]:

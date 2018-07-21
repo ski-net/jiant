@@ -503,6 +503,13 @@ class RankingTask(Task):
         super().__init__(name)
         self.n_choices = n_choices
 
+class ContrastiveRankingTask(RankingTask):
+    ''' Generic contrastive triplet classification task
+    (sorry for naming abuse) '''
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        print("ContrastiveRankingTask")
+
 
 class LanguageModelingTask(SequenceGenerationTask):
     ''' Generic language modeling task '''
@@ -634,12 +641,15 @@ class SSTTask(SingleClassificationTask):
         log.info("\tFinished loading SST data.")
 
 
-class RedditTask(RankingTask):
+class RedditTask(ContrastiveRankingTask):
     ''' Task class for Reddit data.  '''
 
     def __init__(self, path, max_seq_len, name="reddit"):
         ''' '''
-        super(RedditTask, self).__init__(name, 2)
+        super(RedditTask, self).__init__(name=name, n_choices=2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.train_data_text[1]  + self.val_data_text[0] + self.val_data_text[1]
+        #:pdb.set_trace()
         self.scorer1 = Average() #CategoricalAccuracy()
         self.scorer2 = None
         self.val_metric = "%s_accuracy" % self.name

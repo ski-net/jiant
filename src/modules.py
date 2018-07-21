@@ -175,6 +175,7 @@ class Pooler(nn.Module):
 
     def __init__(self, d_inp, project=True, d_proj=512, pool_type='max'):
         super(Pooler, self).__init__()
+        self.d_proj = d_proj
         self.project = nn.Linear(d_inp, d_proj) if project else lambda x: x
         self.pool_type = pool_type
 
