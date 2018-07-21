@@ -21,7 +21,7 @@ class Bandit():
         # intialize action value: optimistic if large value
         if isinstance(initialQ,int) or isinstance(initialQ,float):
             self.Q = np.array([float(initialQ)] * self.k)
-        elif isinstance(initialQ,list) and len(initialQ) == selk.k:
+        elif isinstance(initialQ,list) and len(initialQ) == self.k:
             self.Q = np.array(initialQ)
 
         # method specific param
