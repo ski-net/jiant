@@ -324,8 +324,15 @@ def build_module(task, model, d_sent, d_emb, vocab, embedder, args):
         task.img_encoder = CNNEncoder(model_name='resnet', path=task.path)
     elif isinstance(task, RankingTask):
         pooler, dnn_ResponseModel = build_reddit_module(task, d_sent, task_params)
+        classifier = Classifier.from_params(
+            d_inp=7 * pooler.d_proj,
+            n_classes=2,
+            params=task_params,
+        )
         setattr(model, '%s_mdl' % task.name, pooler)
         setattr(model, '%s_Response_mdl' % task.name, dnn_ResponseModel)
+        setattr(model, '%s_classifier' % task.name, classifier)
+
 
     else:
         raise ValueError("Module not found for %s" % task.name)
