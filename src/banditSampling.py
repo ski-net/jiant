@@ -22,7 +22,7 @@ class Bandit():
         if isinstance(initialQ,int) or isinstance(initialQ,float):
             self.Q = np.array([float(initialQ)] * self.k)
         elif isinstance(initialQ,list) and len(initialQ) == self.k:
-            self.Q = np.array(initialQ)
+            self.Q = np.array([float(i) for i in initialQ])
 
         # method specific param
         self.explore_method = explore_method
