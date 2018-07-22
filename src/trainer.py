@@ -484,6 +484,7 @@ class SamplingMultiTaskTrainer():
 
                 ## new reward ##
                 current  =  -np.sum(validate_bandit_losses)
+                log.info("  current mean loss: %.4f", current)
                 try: gain =  current - prev
                 except NameError: gain =  0
                 prev = current
