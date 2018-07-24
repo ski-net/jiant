@@ -1298,7 +1298,7 @@ class NLITypeProbingTask(PairClassificationTask):
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
         tr_data = load_tsv(os.path.join(path, 'train_dummy.tsv'), max_seq_len,
                         s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
-        val_data = load_tsv(os.path.join(path, probe_path), max_seq_len,
+        val_data = load_tsv(os.path.join(path, "dat_order/word_permute_prem.dev"), max_seq_len,
                         s1_idx=0, s2_idx=1, targ_idx=2, targ_map=targ_map, skip_rows=0)
         te_data = load_tsv(os.path.join(path, 'test_dummy.tsv'), max_seq_len,
                         s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
@@ -2040,3 +2040,150 @@ class CCGTaggingTask(TaggingTask):
         self.val_data_text = val_data
         self.test_data_text = te_data
         log.info("\tFinished loading CCGTagging data.")
+
+class PPProbingTask(PairClassificationTask):
+    ''' Task class for Probing Task (NLI-type)'''
+
+    def __init__(self, path, max_seq_len, name="pp-prob"):
+        super(PPProbingTask, self).__init__(name, 3)
+        self.load_data(path, max_seq_len)
+        #  self.use_classifier = 'mnli'  # use .conf params instead
+        self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
+            self.val_data_text[0] + self.val_data_text[1]
+
+    def load_data(self, path, max_seq_len):
+        targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
+        tr_data = load_tsv(os.path.join(path, 'train_dummy.tsv'), max_seq_len,
+                        s1_idx=1, s2_idx=2, targ_idx=None, targ_map=targ_map, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'mnli_train_left-right_pilot_prob.txt'), max_seq_len,
+                        s1_idx=0, s2_idx=1, targ_idx=2, targ_map=targ_map, skip_rows=0)
+        te_data = load_tsv(os.path.join(path, 'test_dummy.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=1, targ_idx=2, targ_map=targ_map, skip_rows=0)
+
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading PP probing data.")
+
+class VNTask(SingleClassificationTask):
+    ''' Task class for Probing Task (NLI-type)'''
+
+    def __init__(self, path, max_seq_len, name="vn"):
+        super(VNTask, self).__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.val_data_text[0]
+        self.val_metric = "%s_acc_f1" % self.name
+        self.val_metric_decreases = False
+        self.scorer1 = CategoricalAccuracy()
+        self.scorer2 = F1Measure(1)
+
+    def load_data(self, path, max_seq_len):
+        tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=None, targ_idx=1, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'dev.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=None, targ_idx=1, skip_rows=0)
+        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=None, targ_idx=1, skip_rows=0)
+
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading VN data.")
+
+    def get_metrics(self, reset=False):
+        acc = self.scorer1.get_metric(reset)
+        pcs, rcl, f1 = self.scorer2.get_metric(reset)
+        return {'acc_f1': (acc + f1) / 2, 'accuracy': acc, 'f1': f1}
+
+class VNFullTask(SingleClassificationTask):
+
+    def __init__(self, path, max_seq_len, name="vn-full"):
+        super(VNFullTask, self).__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.val_data_text[0]
+        self.val_metric = "%s_acc_f1" % self.name
+        self.val_metric_decreases = False
+        self.scorer1 = CategoricalAccuracy()
+        self.scorer2 = F1Measure(1)
+
+    def load_data(self, path, max_seq_len):
+        tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=None, targ_idx=0, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'dev.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=None, targ_idx=0, skip_rows=0)
+        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+                        s1_idx=3, s2_idx=None, targ_idx=0, skip_rows=0)
+
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading VN data.")
+
+    def get_metrics(self, reset=False):
+        acc = self.scorer1.get_metric(reset)
+        pcs, rcl, f1 = self.scorer2.get_metric(reset)
+        return {'acc_f1': (acc + f1) / 2, 'accuracy': acc, 'f1': f1}
+
+class VNPairTask(PairClassificationTask):
+
+    def __init__(self, path, max_seq_len, name="vn-pair"):
+        super(VNPairTask, self).__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
+            self.val_data_text[0] + self.val_data_text[1]
+        self.val_metric = "%s_acc_f1" % self.name
+        self.val_metric_decreases = False
+        self.scorer1 = CategoricalAccuracy()
+        self.scorer2 = F1Measure(1)
+
+
+    def load_data(self, path, max_seq_len):
+        tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
+                        s1_idx=1, s2_idx=2, targ_idx=0, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'dev.tsv'), max_seq_len,
+                        s1_idx=1, s2_idx=2, targ_idx=0, skip_rows=0)
+        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+                        s1_idx=1, s2_idx=2, targ_idx=0, skip_rows=0)
+
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading VN Pair data.")
+
+    def get_metrics(self, reset=False):
+        acc = self.scorer1.get_metric(reset)
+        pcs, rcl, f1 = self.scorer2.get_metric(reset)
+        return {'acc_f1': (acc + f1) / 2, 'accuracy': acc, 'f1': f1}
+
+class AttachmentPairTask(PairClassificationTask):
+
+    def __init__(self, path, max_seq_len, name="att-pair"):
+        super(AttachmentPairTask, self).__init__(name, 2)
+        self.load_data(path, max_seq_len)
+        self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
+            self.val_data_text[0] + self.val_data_text[1]
+        self.val_metric = "%s_acc_f1" % self.name
+        self.val_metric_decreases = False
+        self.scorer1 = CategoricalAccuracy()
+        self.scorer2 = F1Measure(1)
+
+
+    def load_data(self, path, max_seq_len):
+        tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=2, targ_idx=1, skip_rows=0)
+        val_data = load_tsv(os.path.join(path, 'dev.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=2, targ_idx=1, skip_rows=0)
+        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+                        s1_idx=0, s2_idx=2, targ_idx=1, skip_rows=0)
+
+        self.train_data_text = tr_data
+        self.val_data_text = val_data
+        self.test_data_text = te_data
+        log.info("\tFinished loading PP attachment pair data.")
+
+    def get_metrics(self, reset=False):
+        acc = self.scorer1.get_metric(reset)
+        pcs, rcl, f1 = self.scorer2.get_metric(reset)
+        return {'acc_f1': (acc + f1) / 2, 'accuracy': acc, 'f1': f1}
+
+

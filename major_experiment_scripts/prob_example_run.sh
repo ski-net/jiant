@@ -4,7 +4,7 @@ MODEL_DIR=$1 # directory of checkpoint to probe, e.g: /nfs/jsalt/share/models_to
 PROBING_TASK=$2 # task name, e.g. recast-puns
 RUN_NAME=${3:-"test"}
 
-EXP_NAME="probing"
+EXP_NAME="pp_probe"
 PARAM_FILE=${MODEL_DIR}"/params.conf"
 MODEL_FILE=${MODEL_DIR}"/model_state_eval_best.th"
 

@@ -10,6 +10,7 @@ import torch
 from allennlp.data.iterators import BasicIterator
 from . import tasks as tasks_module
 from . import preprocess
+from .tasks import RegressionTask, STSBTask, JOCITask, NLITypeProbingTask, MultiNLITask
 
 from typing import List, Sequence, Iterable, Tuple, Dict
 

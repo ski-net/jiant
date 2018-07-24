@@ -34,7 +34,8 @@ from .tasks import \
     JOCITask, PairOrdinalRegressionTask, WeakGroundedTask, \
     GroundedTask, MTTask, BWBLMTask, WikiInsertionsTask, \
     NLITypeProbingTask, MultiNLIAltTask, VAETask, \
-    RedditTask, Reddit_MTTask
+    RedditTask, Reddit_MTTask, PPProbingTask, VNTask, VNFullTask, VNPairTask, \
+    AttachmentPairTask
 from .tasks import \
     RecastKGTask, RecastLexicosynTask, RecastWinogenderTask, \
     RecastFactualityTask, RecastSentimentTask, RecastVerbcornerTask, \
@@ -104,6 +105,11 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'recast-sentiment': (RecastSentimentTask, 'DNC/recast_sentiment_data'),
              'recast-verbcorner': (RecastVerbcornerTask, 'DNC/recast_verbcorner_data'),
              'recast-verbnet': (RecastVerbnetTask, 'DNC/recast_verbnet_data'),
+             'pp-prob': (PPProbingTask, 'PPProb'),
+             'vn': (VNTask, 'VN/'),
+             'vn-full': (VNFullTask, 'VN-full'),
+             'vn-pair': (VNPairTask, 'VN-pair'),
+             'att-pair': (AttachmentPairTask, 'attachment')
              }
 # Add any tasks registered in tasks.py
 NAME2INFO.update(tasks_module.REGISTRY)
@@ -408,6 +414,7 @@ def get_tasks(train_task_names, eval_task_names, max_seq_len, path=None,
     train_task_names = [name for name in train_task_names if name not in {'mnli-diagnostic'}]
     ''' Load tasks '''
     task_names = sorted(set(train_task_names + eval_task_names))
+
     assert path is not None
     scratch_path = (scratch_path or path)
     log.info("Writing pre-preprocessed tasks to %s", scratch_path)
@@ -419,9 +426,15 @@ def get_tasks(train_task_names, eval_task_names, max_seq_len, path=None,
         task_src_path = os.path.join(path, task_info[1])
         task_scratch_path = os.path.join(scratch_path, task_info[1])
         pkl_path = os.path.join(task_scratch_path, "%s_task.pkl" % name)
+        frozen_scratch_path = os.path.join("/nfs/jsalt/exp/nkim/frozen_pickles", task_info[1])
+        frozen_path = os.path.join(frozen_scratch_path, "%s_task.pkl" % name)
+
         if os.path.isfile(pkl_path) and load_pkl:
             task = pkl.load(open(pkl_path, 'rb'))
             log.info('\tLoaded existing task %s', name)
+        elif os.path.isfile(frozen_path) and load_pkl:
+            task = pkl.load(open(frozen_path, 'rb'))
+            log.info('\tLoaded existing task %s from frozen pickle dir', name)
         else:
             log.info('\tCreating task %s from scratch', name)
             task_cls = task_info[0]
