@@ -805,6 +805,13 @@ class Wiki103_RedditTask(RedditTask):
                 continue
             yield _make_instance(prev_sent, sent, 1)
             prev_sent = sent
+    
+    def count_examples(self):
+        ''' Compute here b/c we're streaming the sentences. '''
+        example_counts = {}
+        for split, split_path in self.files_by_split.items():
+            example_counts[split] = sum(1 for line in open(split_path)) - 1
+        self.example_counts = example_counts
 
 class Reddit_MTTask(SequenceGenerationTask):
     ''' Same as Machine Translation Task except for the load_data function'''
