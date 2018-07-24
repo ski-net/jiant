@@ -759,6 +759,52 @@ class RedditTask(RankingTask):
         acc = self.scorer1.get_metric(reset)
         return {'accuracy': acc}
 
+class Wiki103_RedditTask(RedditTask):
+    def __init__(self, path, max_seq_len, name="wiki103_reddit"):
+        super(Wiki103_RedditTask, self).__init__(path, max_seq_len, name)
+        self.files_by_split = {'train': os.path.join(path, "train.txt"),
+                               'val': os.path.join(path, "valid.txt"),
+                               'test':os.path.join(path, "test.txt")}
+    def load_data(self, path):
+        with open(path) as txt_fh:
+            for row in txt_fh:
+                toks = row.strip()
+                if not toks:
+                    continue
+                toks = toks.replace('@@UNKNOWN@@', 'UNKNOWN')
+                sent = process_sentence(toks, self.max_seq_len)
+                sent = ['@@UNKNOWN@@' if t == 'UNKNOWN' else t for t in sent]
+                yield sent
+
+    def get_sentences(self) -> Iterable[Sequence[str]]:
+        ''' Yield sentences, used to compute vocabulary. '''
+        for split in self.files_by_split:
+            # Don't use test set for vocab building.
+            if split.startswith("test"):
+                continue
+            path = self.files_by_split[split]
+            for sent in self.load_data(path):
+                yield sent
+
+    def process_split(self, split, indexers) -> Iterable[Type[Instance]]:
+        ''' Process a language modeling split.
+        Split is a single list of sentences here.
+        '''
+        def _make_instance(input1, input2, labels):
+            d = {}
+            d["input1"] = _sentence_to_text_field(input1, indexers)
+            d["input2"] = _sentence_to_text_field(input2, indexers)
+            d["labels"] = LabelField(labels, label_namespace="labels",
+                                     skip_indexing=True)
+            return Instance(d)
+        first = True
+        for sent in split:
+            if first:
+                prev_sent = sent
+                first = False
+                continue
+            yield _make_instance(prev_sent, sent, 1)
+            prev_sent = sent
 
 class Reddit_MTTask(SequenceGenerationTask):
     ''' Same as Machine Translation Task except for the load_data function'''
