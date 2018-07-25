@@ -603,7 +603,7 @@ class MultiTaskModel(nn.Module):
         sent2, mask2 = self.sent_encoder(batch['input2'], task)
         classifier = self._get_classifier(task)
 
-        if task.name in ['reddit_pair_classif', 'reddit_pair_classif_mini', 'mt_pair_classif', 'mt_pair_classif_mini']:
+        if task.name in ['wiki103_pair_classif', 'reddit_pair_classif', 'reddit_pair_classif_mini', 'mt_pair_classif', 'mt_pair_classif_mini']:
             sent1_new = torch.cat([sent1, sent1], 0)
             mask1_new = torch.cat([mask1, mask1], 0)
             sent2_new = torch.cat([sent2, torch.cat([sent2[2:], sent2[0:2]], 0)], 0)

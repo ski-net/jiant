@@ -816,6 +816,76 @@ class Wiki103_RedditTask(RedditTask):
             example_counts[split] = sum(1 for line in open(split_path)) - 1
         self.example_counts = example_counts
 
+class Wiki103_PairClassi(PairClassificationTask):
+    def __init__(self, path, max_seq_len, name="wiki103_pair_classif"):
+        super(Wiki103_PairClassi, self).__init__(name, 2)
+        self.scorer2 = None
+        self.val_metric = "%s_accuracy" % self.name
+        self.val_metric_decreases = False
+        self.files_by_split = {'train': os.path.join(path, "train.txt"),
+                               'val': os.path.join(path, "valid.txt"),
+                               'test':os.path.join(path, "test.txt")}
+        self.max_seq_len = max_seq_len
+
+    def get_split_text(self, split: str):
+        ''' Get split text as iterable of records.
+        Split should be one of 'train', 'val', or 'test'.
+        '''
+        return self.load_data(self.files_by_split[split])
+
+    def load_data(self, path):
+        with open(path) as txt_fh:
+            for row in txt_fh:
+                toks = row.strip()
+                if not toks:
+                    continue
+                toks = toks.replace('@@UNKNOWN@@', 'UNKNOWN')
+                sent = process_sentence(toks, self.max_seq_len)
+                sent = ['@@UNKNOWN@@' if t == 'UNKNOWN' else t for t in sent]
+                yield sent
+
+    def get_sentences(self) -> Iterable[Sequence[str]]:
+        ''' Yield sentences, used to compute vocabulary. '''
+        for split in self.files_by_split:
+            # Don't use test set for vocab building.
+            if split.startswith("test"):
+                continue
+            path = self.files_by_split[split]
+            for sent in self.load_data(path):
+                yield sent
+
+    def process_split(self, split, indexers) -> Iterable[Type[Instance]]:
+        ''' Process a language modeling split.
+        Split is a single list of sentences here.
+        '''
+        def _make_instance(input1, input2, labels):
+            d = {}
+            d["input1"] = _sentence_to_text_field(input1, indexers)
+            d["input2"] = _sentence_to_text_field(input2, indexers)
+            d["labels"] = LabelField(labels, label_namespace="labels",
+                                     skip_indexing=True)
+            return Instance(d)
+        first = True
+        for sent in split:
+            if first:
+                prev_sent = sent
+                first = False
+                continue
+            yield _make_instance(prev_sent, sent, 1)
+            prev_sent = sent
+    
+    def count_examples(self):
+        ''' Compute here b/c we're streaming the sentences. '''
+        example_counts = {}
+        for split, split_path in self.files_by_split.items():
+            example_counts[split] = sum(1 for line in open(split_path)) - 1
+        self.example_counts = example_counts
+
+    def get_metrics(self, reset=False):
+        '''Get metrics specific to the task'''
+        acc = self.scorer1.get_metric(reset)
+        return {'accuracy': acc}
+
 class Reddit_MTTask(SequenceGenerationTask):
     ''' Same as Machine Translation Task except for the load_data function'''
 
