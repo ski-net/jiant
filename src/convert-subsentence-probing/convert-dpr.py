@@ -36,12 +36,13 @@ def convert_text_examples_to_json(text, example):
           }
     text = text.split()
     for ex in example:
-        hyp = ex['hypothesis'].split()
+        hyp = utils.TOKENIZER.tokenize(ex['hypothesis'])
         #obj['targets'].append(ex['hypothesis'])
         assert len(text) <= len(hyp)
         found_diff_word = False
         for idx, pair in enumerate(zip(text, hyp)):
             if pair[0] != pair[1]:
+                referent = ''
                 found_diff_word = True
                 distance = len(hyp) - len(text) + 1
                 pro_noun = text[idx]
@@ -60,26 +61,27 @@ def convert_text_examples_to_json(text, example):
                                  }
                         obj['targets'].append(target)
                         break;
-                if not found_referent:
-                    import pdb; pdb.set_trace()
+                #if not found_referent:
+                #    import pdb; pdb.set_trace()
                 break;
 
     return obj
 
 def main():
-    json_objs = []
+    outfiles = {}
     text2examples = get_dpr_text()
     count = 0
     with open('dpr_probing.json', 'w') as outfile:
         for text, example in text2examples.items():
-            tok = utils.TOKENIZER.tokenize(text)
-            import pdb; pdb.set_trace()
+            text = " ".join(utils.TOKENIZER.tokenize(text))
             obj = convert_text_examples_to_json(text, example)
+            if obj["info"]["split"] not in outfiles:
+            	outfiles[obj["info"]["split"]] = open('dpr_probing_%s.json' % (obj["info"]["split"]), 'w')
             if not obj['targets']:
                 count += 1
-            json.dump(obj, outfile)
-            outfile.write('\n')
-    outfile.close()
+                continue
+            json.dump(obj, outfiles[obj["info"]["split"]])
+            outfiles[obj["info"]["split"]].write('\n')
     print(count)
 
 
