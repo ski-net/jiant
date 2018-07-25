@@ -602,32 +602,48 @@ class MultiTaskModel(nn.Module):
         sent1, mask1 = self.sent_encoder(batch['input1'], task)
         sent2, mask2 = self.sent_encoder(batch['input2'], task)
         classifier = self._get_classifier(task)
-        logits = classifier(sent1, sent2, mask1, mask2)
-        out['logits'] = logits
-        out['n_exs'] = get_batch_size(batch)
 
-        if 'labels' in batch:
-            labels = batch['labels']
-            labels = labels.squeeze(-1) if len(labels.size()) > 1 else labels
-            if isinstance(task, JOCITask):
-                logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
-                out['loss'] = F.mse_loss(logits, labels)
-                logits_np = logits.data.cpu().numpy()
-                labels_np = labels.data.cpu().numpy()
-                task.scorer1(mean_squared_error(logits_np, labels_np))
-                task.scorer2(logits_np, labels_np)
-            elif isinstance(task, STSBTask):
-                logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
-                out['loss'] = F.mse_loss(logits, labels)
-                logits_np = logits.data.cpu().numpy()
-                labels_np = labels.data.cpu().numpy()
-                task.scorer1(logits_np, labels_np)
-                task.scorer2(logits_np, labels_np)
-            else:
-                out['loss'] = F.cross_entropy(logits, labels)
-                task.scorer1(logits, labels)
-                if task.scorer2 is not None:
-                    task.scorer2(logits, labels)
+        if task.name in ['reddit_pair_classif', 'reddit_pair_classif_mini', 'mt_pair_classif', 'mt_pair_classif_mini']:
+            sent1_new = torch.cat([sent1, sent1], 0)
+            mask1_new = torch.cat([mask1, mask1], 0)
+            sent2_new = torch.cat([sent2, torch.cat([sent2[2:], sent2[0:2]], 0)], 0)
+            mask2_new = torch.cat([mask2, torch.cat([mask2[2:], mask2[0:2]], 0)], 0)
+            logits = classifier(sent1_new, sent2_new, mask1_new, mask2_new)        
+            out['logits'] = logits 
+            out['n_exs'] = len(sent1_new)
+            labels = torch.cat([torch.ones(len(sent1)), torch.zeros(len(sent1))])
+            labels = torch.tensor(labels, dtype=torch.long).cuda()
+            out['loss'] = F.cross_entropy(logits, labels) 
+            task.scorer1(logits, labels)
+            if task.scorer2 is not None:
+                task.scorer2(logits, labels) 
+        else:
+            logits = classifier(sent1, sent2, mask1, mask2)
+            out['logits'] = logits
+            out['n_exs'] = get_batch_size(batch)
+
+            if 'labels' in batch:
+                labels = batch['labels']
+                labels = labels.squeeze(-1) if len(labels.size()) > 1 else labels
+                if isinstance(task, JOCITask):
+                    logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
+                    out['loss'] = F.mse_loss(logits, labels)
+                    logits_np = logits.data.cpu().numpy()
+                    labels_np = labels.data.cpu().numpy()
+                    task.scorer1(mean_squared_error(logits_np, labels_np))
+                    task.scorer2(logits_np, labels_np)
+                elif isinstance(task, STSBTask):
+                    logits = logits.squeeze(-1) if len(logits.size()) > 1 else logits
+                    out['loss'] = F.mse_loss(logits, labels)
+                    logits_np = logits.data.cpu().numpy()
+                    labels_np = labels.data.cpu().numpy()
+                    task.scorer1(logits_np, labels_np)
+                    task.scorer2(logits_np, labels_np)
+                else:
+                    out['loss'] = F.cross_entropy(logits, labels)
+                    task.scorer1(logits, labels)
+                    if task.scorer2 is not None:
+                        task.scorer2(logits, labels)
 
         if predict:
             if isinstance(task, RegressionTask):
@@ -655,29 +671,40 @@ class MultiTaskModel(nn.Module):
         sent2_rep = sent_dnn(sent2_rep_pool)
 
         #  if 1:
-        sent1_rep = sent1_rep/sent1_rep.norm(dim=1)[:, None]
-        sent2_rep = sent2_rep/sent2_rep.norm(dim=1)[:, None]
+        #sent1_rep = sent1_rep/sent1_rep.norm(dim=1)[:, None]
+        #sent2_rep = sent2_rep/sent2_rep.norm(dim=1)[:, None]
         cos_simi = torch.mm(sent1_rep, sent2_rep.transpose(0,1))
-        labels = torch.eye(len(cos_simi))
+        if task.name == 'reddit_softmax':
+            cos_simi_backward = cos_simi.transpose(0,1)
+            labels = torch.arange(len(cos_simi), dtype=torch.long).cuda()
+    
+            total_loss = torch.nn.CrossEntropyLoss()(cos_simi, labels) # one-way loss
+            total_loss_rev = torch.nn.CrossEntropyLoss()(cos_simi_backward, labels) #reverse 
+            out['loss'] = total_loss + total_loss_rev
+    
+            pred = torch.nn.Softmax(dim=1)(cos_simi)
+            pred = torch.argmax(pred, dim=1)
+        else:
+            labels = torch.eye(len(cos_simi))
 
-        # balancing pairs: #positive_pairs = batch_size, #negative_pairs = batch_size-1
-        cos_simi_pos = torch.diag(cos_simi)
-        cos_simi_neg = torch.diag(cos_simi, diagonal=1)
-        cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0)
-        labels_pos = torch.diag(labels)
-        labels_neg = torch.diag(labels, diagonal=1)
-        labels = torch.cat([labels_pos, labels_neg], dim=0)
-        labels = labels.cuda()
-        #total_loss = torch.nn.BCEWithLogitsLoss(weight=weights)(cos_simi, labels)
-        total_loss = torch.nn.BCEWithLogitsLoss()(cos_simi, labels)
-        out['loss'] = total_loss
+            # balancing pairs: #positive_pairs = batch_size, #negative_pairs = batch_size-1
+            cos_simi_pos = torch.diag(cos_simi)
+            cos_simi_neg = torch.diag(cos_simi, diagonal=1)
+            cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0)
+            labels_pos = torch.diag(labels)
+            labels_neg = torch.diag(labels, diagonal=1)
+            labels = torch.cat([labels_pos, labels_neg], dim=0)
+            labels = labels.cuda()
+            #total_loss = torch.nn.BCEWithLogitsLoss(weight=weights)(cos_simi, labels)
+            total_loss = torch.nn.BCEWithLogitsLoss()(cos_simi, labels)
+            out['loss'] = total_loss
+    
+            pred = F.sigmoid(cos_simi).round()
 
-        pred = F.sigmoid(cos_simi).round()
         total_correct = torch.sum(pred == labels)
         batch_acc = total_correct.item()/len(labels)
         out["n_exs"] = len(labels)
         task.scorer1(batch_acc)
-
         return out
 
 

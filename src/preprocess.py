@@ -34,7 +34,8 @@ from .tasks import \
     JOCITask, PairOrdinalRegressionTask, WeakGroundedTask, \
     GroundedTask, MTTask, BWBLMTask, WikiInsertionsTask, \
     NLITypeProbingTask, MultiNLIAltTask, VAETask, \
-    RedditTask, Reddit_MTTask, Wiki103_RedditTask 
+    RedditTask, Reddit_MTTask, RedditTask_PairClassi, MTdata_PairClassi, \
+    Wiki103_RedditTask
 from .tasks import \
     RecastKGTask, RecastLexicosynTask, RecastWinogenderTask, \
     RecastFactualityTask, RecastSentimentTask, RecastVerbcornerTask, \
@@ -90,7 +91,8 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'dissenthuge': (DisSentWikiHugeTask, 'DisSent/wikitext/'),
              'weakgrounded': (WeakGroundedTask, 'mscoco/weakgrounded/'),
              'grounded': (GroundedTask, 'mscoco/grounded/'),
-             'reddit': (RedditTask, 'Reddit/'),
+             'reddit': (RedditTask, 'Reddit_2008/'),
+             'reddit_dummy': (RedditTask, 'Reddit_2008_TestSample/'),
              'reddit_MTtask': (Reddit_MTTask, 'reddit_comments_replies_MT/'),
              'pos': (POSTaggingTask, 'POS/'),
              'ccg': (CCGTaggingTask, 'CCG/'),
@@ -105,6 +107,13 @@ NAME2INFO = {'sst': (SSTTask, 'SST-2/'),
              'recast-sentiment': (RecastSentimentTask, 'DNC/recast_sentiment_data'),
              'recast-verbcorner': (RecastVerbcornerTask, 'DNC/recast_verbcorner_data'),
              'recast-verbnet': (RecastVerbnetTask, 'DNC/recast_verbnet_data'),
+             'reddit_softmax': (RedditTask, 'Reddit_2008/'),
+             'reddit_3.4G': (RedditTask, 'Reddit_3.4G/'),
+             'reddit_13G': (RedditTask, 'Reddit_13G/'),
+             'reddit_pair_classif': (RedditTask_PairClassi, 'Reddit_2008/'),
+             'reddit_pair_classif_mini': (RedditTask_PairClassi, 'Reddit_2008_TestSample/'),
+             'mt_pair_classif': (MTdata_PairClassi, 'wmt14_en_de_local/'),
+             'mt_pair_classif_mini': (MTdata_PairClassi, 'wmt14_en_de_mini/')
              }
 # Add any tasks registered in tasks.py
 NAME2INFO.update(tasks_module.REGISTRY)
