@@ -12,10 +12,12 @@ function run_exp() {
         --remote_log --notify berlinchen7@gmail.com
 }
 
-set -eux
+#set -eux
 
-cd $(dirname $0)
-pushd "${PWD%jiant*}/jiant"
+#cd $(dirname $0)
+#pushd "${PWD%jiant*}/jiant"
+
+cd ..
 
 run_exp "edges-srl-conll2005"
 run_exp "edges-spr2"

@@ -6,16 +6,18 @@
 function run_exp() {
     OVERRIDES="exp_name=elmo-random-$1, run_name=run"
     OVERRIDES+=", train_tasks=$1, elmo_chars_only=0"
-    OVERRIDES+=", rand_elmo=1"
+    OVERRIDES+=", random_elmo=1"
     python main.py --config_file config/edgeprobe_bare_.conf \
         -o "${OVERRIDES}" \
         --remote_log --notify berlinchen7@gmail.com
 }
 
-set -eux
+#set -eux
 
-cd $(dirname $0)
-pushd "${PWD%jiant*}/jiant"
+#cd $(dirname $0)
+#pushd "${PWD%jiant*}/jiant"
+
+cd ..
 
 run_exp "edges-srl-conll2005"
 run_exp "edges-spr2"
