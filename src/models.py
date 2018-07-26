@@ -68,6 +68,8 @@ ELMO_SRC_DIR = (os.getenv("ELMO_SRC_DIR") or
 ELMO_OPT_PATH = os.path.join(ELMO_SRC_DIR, ELMO_OPT_NAME)
 ELMO_WEIGHTS_PATH = os.path.join(ELMO_SRC_DIR, ELMO_WEIGHTS_NAME)
 
+ELMO_RANDOM_WEIGHTS_PATH = "/nfs/jsalt/home/berlin/elmo_2x4096_512_2048cnn_2xhighway_weights_random.hdf5"
+ELMO_ORTHO_WEIGHTS_PATH = "/nfs/jsalt/home/berlin/elmo_2x4096_512_2048cnn_2xhighway_weights_ortho.hdf5"
 
 def build_model(args, vocab, pretrained_embs, tasks):
     '''Build model according to args '''
@@ -264,9 +266,17 @@ def build_embeddings(args, vocab, tasks, pretrained_embs=None):
             d_emb += 512
         else:
             log.info("\tUsing full ELMo! (separate scalars/task)")
+            if args.random_elmo:
+                log.info("Using full ELMo, with randomized RNN weights.")
+                weight_file=ELMO_RANDOM_WEIGHTS_PATH
+            elif args.ortho_elmo:
+                log.info("Using full ELMo, with (semi) orthogonal matrices as weights.")
+                weight_file=ELMO_ORTHO_WEIGHTS_PATH
+            else:
+                weight_file=ELMO_WEIGHTS_PATH
             elmo_embedder = ElmoTokenEmbedderWrapper(
                 options_file=ELMO_OPT_PATH,
-                weight_file=ELMO_WEIGHTS_PATH,
+                weight_file=weight_file,
                 # Include pretrain task
                 num_output_representations=len(reps) + 1,
                 dropout=args.dropout)
