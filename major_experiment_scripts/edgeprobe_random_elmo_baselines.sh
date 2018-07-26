@@ -19,13 +19,14 @@ function run_exp() {
 
 cd ..
 
-run_exp "edges-srl-conll2005"
+#run_exp "edges-srl-conll2005"
 run_exp "edges-spr2"
-run_exp "edges-dpr"
-run_exp "edges-coref-ontonotes"
-run_exp "edges-dep-labeling"
+#run_exp "edges-dpr"
+#run_exp "edges-coref-ontonotes"
+#run_exp "edges-dep-labeling"
+run_exp "edges-ner-conll2003"
 
-sudo poweroff
+#sudo poweroff
 
 
 
