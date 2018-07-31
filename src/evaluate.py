@@ -42,7 +42,7 @@ def evaluate(model, tasks: Sequence[tasks_module.Task], batch_size: int,
     all_metrics = {"micro_avg": 0.0, "macro_avg": 0.0}
     all_preds = {}
     n_examples_overall = 0
-    
+
     assert len(tasks) > 0 , "Configured to evaluate, but specified no task to evaluate."
 
     for task in tasks:
@@ -187,7 +187,7 @@ def _write_edge_preds(task: tasks_module.EdgeProbingTask,
                 base = field.split(".", 1)[1]
                 d[base] = preds_df.at[i, field].tolist()
         return d
-        
+
     if join_with_input:
         preds_df.set_index(['idx'], inplace=True)
         # Load input data and join by row index.
