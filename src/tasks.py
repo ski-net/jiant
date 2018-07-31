@@ -722,8 +722,16 @@ class SSTTask(SingleClassificationTask):
 @register_task('reddit_13G', rel_path='Reddit_13G/')
 @register_task('reddit_softmax', rel_path='Reddit_2008/')
 class RedditTask(RankingTask):
-    ''' Task class for Reddit data.  '''
-
+    ''' Task class for Reddit data.
+        Architecture closely follows paper "Learning Semantic Textual Similarity from Conversations"
+        Above Task names are for various amounts of dataset and different objective functions
+        Description of above Task names and their data dir:
+        'reddit' - on the 2008 year Reddit data, ~300MB
+        'reddit_dummy' - dummy dataset with 200 samples to quickly debug code
+        'reddit_3.4G', 'reddit_13G' - 3.4G and 13G of data collected from various years
+        'reddit_softmax' - same as 'reddit' except that objective function is softmax, all other are
+        based on Binary Cross Entropy
+    '''
     def __init__(self, path, max_seq_len, name="reddit"):
         ''' '''
         super().__init__(name, 2)
@@ -797,7 +805,14 @@ class RedditTask(RankingTask):
 @register_task('reddit_pair_classif_dummy', rel_path='Reddit_2008_TestSample/')
 @register_task('reddit_pair_classif_3.4G', rel_path='Reddit_3.4G/')
 class RedditPairClassificationTask(PairClassificationTask):
-    ''' Task class for Reddit data.  '''
+    ''' Task class for Reddit data.  
+        Architecture follows the standard pair classsification setup where we do [a,b,a*b,|a-b|] on 
+        the sentence encoder outputs. Look at forward function in models.py
+        Same as RedditTask except the inheritance class
+        'reddit_pair_classif' - works on 2008 Year data, ~300MB
+        'reddit_pair_classif_dummy' - dummy dataset, useful for debugging
+        'reddit_pair_classif_3.4G' - works on 3.4G of data, collected from several years 
+    '''
 
     def __init__(self, path, max_seq_len, name="reddit_PairClassi"):
         ''' '''
@@ -865,69 +880,6 @@ class RedditPairClassificationTask(PairClassificationTask):
         '''Get metrics specific to the task'''
         acc = self.scorer1.get_metric(reset)
         return {'accuracy': acc}
-
-@register_task('mt_pair_classif', rel_path='wmt14_en_de_local/')
-@register_task('mt_pair_classif_dummy', rel_path='wmt14_en_de_mini/')
-class MTDataPairClassificationTask(RedditPairClassificationTask):
-    ''' Task class for MT data pair classification using standard setup.
-        RedditPairClassificationTask and MTDataPairClassificationTask are same tasks with different data
-    '''
-    def __init__(self, path, max_seq_len, name="mt_data_PairClassi"):
-        ''' '''
-        super().__init__(path, max_seq_len, name)
-        self.files_by_split = {split: os.path.join(path, "%s.txt" % split) for \
-                                split in ["train", "val", "test"]}
-
-    def load_data(self, path):
-        ''' Load data '''
-        with codecs.open(path, 'r', 'utf-8', errors='ignore') as txt_fh:
-            for row in txt_fh:
-                row = row.strip().split('\t')
-                if len(row) < 2 or not row[0] or not row[1]:
-                    continue
-                sent1 = process_sentence(row[0], self.max_seq_len)
-                sent2 = process_sentence(row[1], self.max_seq_len)
-                targ = 1
-                yield (sent1, sent2, targ)
-
-    def count_examples(self):
-        ''' Compute here b/c we're streaming the sentences. '''
-        example_counts = {}
-        for split, split_path in self.files_by_split.items():
-            example_counts[split] = sum(1 for line in codecs.open(split_path, 'r', 'utf-8', errors='ignore'))
-        self.example_counts = example_counts
-
-
-class CoLATask(SingleClassificationTask):
-    '''Class for Warstdadt acceptability task'''
-
-    def __init__(self, path, max_seq_len, name="acceptability"):
-        ''' '''
-        super(CoLATask, self).__init__(name, 2)
-        self.load_data(path, max_seq_len)
-        self.sentences = self.train_data_text[0] + self.val_data_text[0]
-        self.val_metric = "%s_mcc" % self.name
-        self.val_metric_decreases = False
-        #self.scorer1 = Average()
-        self.scorer1 = Correlation("matthews")
-        self.scorer2 = CategoricalAccuracy()
-
-    def load_data(self, path, max_seq_len):
-        '''Load the data'''
-        tr_data = load_tsv(os.path.join(path, "train.tsv"), max_seq_len,
-                           s1_idx=3, s2_idx=None, targ_idx=1)
-        val_data = load_tsv(os.path.join(path, "dev.tsv"), max_seq_len,
-                            s1_idx=3, s2_idx=None, targ_idx=1)
-        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
-                           s1_idx=1, s2_idx=None, targ_idx=None, idx_idx=0, skip_rows=1)
-        self.train_data_text = tr_data
-        self.val_data_text = val_data
-        self.test_data_text = te_data
-        log.info("\tFinished loading CoLA.")
-
-    def get_metrics(self, reset=False):
-        return {'mcc': self.scorer1.get_metric(reset),
-                'accuracy': self.scorer2.get_metric(reset)}
 
 
 class QQPTask(PairClassificationTask):

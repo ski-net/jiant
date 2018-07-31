@@ -734,9 +734,16 @@ class MultiTaskModel(nn.Module):
 
 
     def _ranking_forward(self, batch, task, predict):
-        ''' For caption and image ranking. This implementation is intended for Reddit
-            This implementation assumes only positive pairs exist in input data.
-            Negative pairs are created within batch.
+        ''' This implementation is intended for Reddit. It uses Binary cross entropy or cross entropy as obj. fun
+            Forward function written specially for cases where we have only +ve pairs in input data
+            For Binary Cross Entropy - -ve pairs are created by rotating either sent1 or sent2.
+                                        Ex: [1,2,3,4] after rotation by 2 positions [3,4,1,2]
+                                        Assumption is each example in sent1 has only one corresponding example 
+                                        in sent2 which is +ve so rotating sent1/sent2 and pairing with sent2/sent1 is 
+                                        one way to obtain -ve pairs. Here #+ve samples = #-ve samples
+            For Cross Entropy - softmax is applied along both dimensions of dot product matrix,
+                                accuracy is computed along only one dimension for simplicity
+                                
         '''
         out = {}
         # feed forwarding inputs through sentence encoders
@@ -764,17 +771,17 @@ class MultiTaskModel(nn.Module):
             labels = torch.eye(len(cos_simi))
 
             # balancing pairs: #positive_pairs = batch_size, #negative_pairs = batch_size-1
-            cos_simi_pos = torch.diag(cos_simi)
-            cos_simi_neg = torch.diag(cos_simi, diagonal=1)
-            cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0)
-            labels_pos = torch.diag(labels)
-            labels_neg = torch.diag(labels, diagonal=1)
-            labels = torch.cat([labels_pos, labels_neg], dim=0)
+            cos_simi_pos = torch.diag(cos_simi) # positive samples similarity
+            cos_simi_neg = torch.diag(cos_simi, diagonal=1) # negative samples similarity
+            cos_simi = torch.cat([cos_simi_pos, cos_simi_neg], dim=0) 
+            labels_pos = torch.diag(labels) # labels for positive samples
+            labels_neg = torch.diag(labels, diagonal=1)   # labels for negative samples
+            labels = torch.cat([labels_pos, labels_neg], dim=0)  
             labels = labels.cuda()
-            total_loss = torch.nn.BCEWithLogitsLoss()(cos_simi, labels)
+            total_loss = torch.nn.BCEWithLogitsLoss()(cos_simi, labels) # calculating binary cross entropy
             out['loss'] = total_loss
 
-            pred = F.sigmoid(cos_simi).round()
+            pred = F.sigmoid(cos_simi).round() # predicted labels
 
         total_correct = torch.sum(pred == labels)
         batch_acc = total_correct.item()/len(labels)
