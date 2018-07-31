@@ -69,6 +69,9 @@ def evaluate(model, tasks: Sequence[tasks_module.Task], batch_size: int,
             if task.name in IDX_REQUIRED_TASK_NAMES:
                 assert 'idx' in batch, (f"'idx' field missing from batches "
                                         "for task {task.name}!")
+            for key in out.keys():
+                if key.startswith("preds."):
+                    cols[key] = _coerce_list(out[key])
             for field in FIELDS_TO_EXPORT:
                 if field in batch:
                     cols[field] = _coerce_list(batch[field])
@@ -175,8 +178,16 @@ def _write_edge_preds(task: tasks_module.EdgeProbingTask,
     preds_file = os.path.join(pred_dir, f"{task.name}_{split_name}.json")
     # Each row of 'preds' is a NumPy object, need to convert to list for
     # serialization.
-    preds_df = preds_df.copy()
-    preds_df['preds'] = [a.tolist() for a in preds_df['preds']]
+    def _get_ex_preds(i):
+        d = {}
+        for field in preds_df.columns:
+            if field == 'preds':
+                d['proba'] = preds_df.at[i, field].tolist()
+            elif field.startswith("preds."):
+                base = field.split(".", 1)[1]
+                d[base] = preds_df.at[i, field].tolist()
+        return d
+        
     if join_with_input:
         preds_df.set_index(['idx'], inplace=True)
         # Load input data and join by row index.
@@ -184,7 +195,7 @@ def _write_edge_preds(task: tasks_module.EdgeProbingTask,
                  task.name, split_name)
         records = task.get_split_text(split_name)
         # TODO: update this with more prediction types, when available.
-        records = (task.merge_preds(r, {'proba': preds_df.at[i, 'preds']})
+        records = (task.merge_preds(r, _get_ex_preds(i))
                    for i, r in enumerate(records))
     else:
         records = (row.to_dict() for _, row in preds_df.iterrows())

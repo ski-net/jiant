@@ -150,8 +150,14 @@ class EdgeClassifierModule(nn.Module):
 
         if predict:
             # Return preds as a list.
-            preds = self.get_predictions(logits)
-            out['preds'] = list(self.unbind_predictions(preds, span_mask))
+            probas = self.get_probas(logits)
+            out['preds'] = list(self.unbind_predictions(probas, span_mask))
+            # Return list of span embeddings for span1, span2
+            out['preds.span1_emb'] = list(
+                self.unbind_predictions(span1_emb, span_mask))
+            if not self.single_sided:
+                out['preds.span2_emb'] = list(
+                    self.unbind_predictions(span2_emb, span_mask))
 
         return out
 
@@ -174,7 +180,7 @@ class EdgeClassifierModule(nn.Module):
             yield pred[mask].numpy()  # only non-masked predictions
 
 
-    def get_predictions(self, logits: torch.Tensor):
+    def get_probas(self, logits: torch.Tensor):
         """Return class probabilities, same shape as logits.
 
         Args:
