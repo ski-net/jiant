@@ -12,26 +12,9 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
-import nltk
-nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
-
-# Install a few python packages using pip
-from w266_common import utils
-
 import pip
 import pkgutil
 from pip._internal import main as pipmain
-if not pkgutil.find_loader("tqdm"):
-    pipmain(["install", "tqdm"])
-if not pkgutil.find_loader("graphviz"):
-    pipmain(["install", "graphviz"])
-
-
-import nltk
-from  w266_common import treeviz
-# Monkey-patch NLTK with better Tree display that works on Cloud or other display-less server.
-print("Overriding nltk.tree.Tree pretty-printing to use custom GraphViz.")
-treeviz.monkey_patch(nltk.tree.Tree, node_style_fn=None, format='svg')
 
 import os, sys, collections
 import copy
@@ -44,54 +27,69 @@ from IPython.display import display, HTML
 from tqdm import tqdm as ProgressBar
 
 import logging
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
-# Helpers for this assignment
 from w266_common import utils, treeviz
 import part2_helpers
 import pcfg, pcfg_test
 import cky, cky_test
 
-# Using full ptb 
-corpus = nltk.corpus.ptb
+import time
 
-# Parsing file names to find file IDs corresponding to standard split of train, dev, and test data
-train_files, dev_files, dev_full_files, test_files = [], [], [], []
-for f in corpus.fileids():
-    if f.split('/')[0] == 'BROWN':
-        continue
-    section = int(f.split('/')[1])
-    file_num = int(f.split('/')[2][6:8])
-    if section > 1 and section < 22:
-        train_files.append(f)
-    elif section == 22:
-        dev_full_files.append(f)
+nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
+
+def check_requirements():
+    # Install a few python packages using pip
+    if not pkgutil.find_loader("tqdm"):
+        pipmain(["install", "tqdm"])
+    if not pkgutil.find_loader("graphviz"):
+        pipmain(["install", "graphviz"])
+
+def load_ptb():
+    # Monkey-patch NLTK with better Tree display that works on Cloud or other display-less server.
+    print("Overriding nltk.tree.Tree pretty-printing to use custom GraphViz.")
+    treeviz.monkey_patch(nltk.tree.Tree, node_style_fn=None, format='svg')
+
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
+    # Using full ptb 
+    corpus = nltk.corpus.ptb
+
+    # Parsing file names to find file IDs corresponding to standard split of train, dev, and test data
+    train_files, dev_files, dev_full_files, test_files = [], [], [], []
+    for f in corpus.fileids():
+        if f.split('/')[0] == 'BROWN':
+            continue
+        section = int(f.split('/')[1])
+        file_num = int(f.split('/')[2][6:8])
+        if section > 1 and section < 22:
+            train_files.append(f)
+        elif section == 22:
+            dev_full_files.append(f)
         if file_num < 20:
             dev_files.append(f)
-    elif section == 23:
-        test_files.append(f)
+        elif section == 23:
+            test_files.append(f)
 
-train_sent, dev_sent, dev_full_sent, test_sent = [], [], [], []
-use_full_ptb = True 
-if use_full_ptb:
-    part2_helpers.verify_ptb_install()
-    corpus = nltk.corpus.ptb  
-    if not hasattr(corpus, '_parsed_sents'):
-        print("Monkey-patching corpus reader...")
-        corpus._parsed_sents = corpus.parsed_sents
-        for train_file in train_files:
-            train_sent += [s for s in corpus._parsed_sents(train_file)]
-        for dev_file in dev_files:
-            dev_sent += [s for s in corpus._parsed_sents(dev_file)]
-        for test_file in test_files:
-            test_sent += [s for s in corpus._parsed_sents(test_file)]
-        for dev_full_file in dev_full_files:
-            dev_full_sent += [s for s in corpus._parsed_sents(dev_full_file)]
+    train_sent, dev_sent, dev_full_sent, test_sent = [], [], [], []
+    use_full_ptb = True 
+    if use_full_ptb:
+        part2_helpers.verify_ptb_install()
+        corpus = nltk.corpus.ptb  
+        if not hasattr(corpus, '_parsed_sents'):
+            print("Monkey-patching corpus reader...")
+            corpus._parsed_sents = corpus.parsed_sents
+            for train_file in train_files:
+                train_sent += [s for s in corpus._parsed_sents(train_file)]
+            for dev_file in dev_files:
+                dev_sent += [s for s in corpus._parsed_sents(dev_file)]
+            for test_file in test_files:
+                test_sent += [s for s in corpus._parsed_sents(test_file)]
+            for dev_full_file in dev_full_files:
+                dev_full_sent += [s for s in corpus._parsed_sents(dev_full_file)]
 
 print("Converting to common JSON format...")
 print("Starting timer.")
 
-import time
 t_0 = time.time()
 
 def find_depth(tree, subtree):
@@ -222,19 +220,33 @@ def prune(tree):
         pruned_tree = pruned_tree.replace(prune_key, "")
     return Tree.fromstring(pruned_tree)
 
-train_sent = [prune(sentence) for sentence in train_sent]
-dev_sent = [prune(sentence) for sentence in dev_sent]
-test_sent = [prune(sentence) for sentence in test_sent]
-dev_full_sent = [prune(sentence) for sentence in dev_full_sent]
+def main(args):
+    check_requirements()
+    
+    train_sent, dev_sent, dev_full_sent, test_sent = read_ptb()
+    
+    print("Converting to common JSON format...")
+    print("Starting timer.")
 
-tree_to_json('train', train_sent)
-print("Finished generating train JSON.")
-tree_to_json('dev', dev_sent)
-print("Finished generating dev JSON.")
-tree_to_json('test', test_sent)
-print("Finished generating test JSON.")
-tree_to_json('dev.full', dev_full_sent)
-print("Finished generating dev.full JSON.")
+    t_0 = time.time()
 
-print("done.")
-print("Converting to JSON takes " + str(time.time() - t_0) + " seconds.")
+    train_sent = [prune(sentence) for sentence in train_sent]
+    dev_sent = [prune(sentence) for sentence in dev_sent]
+    test_sent = [prune(sentence) for sentence in test_sent]
+    dev_full_sent = [prune(sentence) for sentence in dev_full_sent]
+
+    tree_to_json('train', train_sent)
+    print("Finished generating train JSON.")
+    tree_to_json('dev', dev_sent)
+    print("Finished generating dev JSON.")
+    tree_to_json('test', test_sent)
+    print("Finished generating test JSON.")
+    tree_to_json('dev.full', dev_full_sent)
+    print("Finished generating dev.full JSON.")
+
+    print("done.")
+    print("Converting to JSON takes " + str(time.time() - t_0) + " seconds.")
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
+    sys.exit(0)
