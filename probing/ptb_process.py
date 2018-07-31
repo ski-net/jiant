@@ -1,8 +1,16 @@
+#!/usr/bin/env python
+
+# Helper script to generate edge-probing json file recasted from Penn Treebank.
+#   
+# TODO
+# Usage:
+#  python retokenize_edge_data.py /path/to/edge/probing/data/*.json
+#
+# Speed: takes around 2.5 minutes to process 90000 sentences on a single core.
+
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
-
-#import ipdb as pdb
 
 import nltk
 nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
@@ -151,7 +159,6 @@ def tree_to_json(split, sent_list):
     num_sent = len(sent_list)
     #may want to parallelize this for loop
     for index, sentence in enumerate(sent_list):
-#        print(index)
         data["data"].append(sent_to_dict(sentence))
 
     with open('ptb_' + split + '.json', 'w') as outfile:
@@ -165,7 +172,8 @@ def is_null(tree):
         return True
     if (not isinstance(tree, str)):
         for i in range(len(tree)):        
-            if isinstance(tree[i], str) or (not is_null(tree[i])): #I have trouble not using recursion here
+            # Determine, via recursion, whether a given subtree consists entirely of null elements:
+            if isinstance(tree[i], str) or (not is_null(tree[i])):
                 return False
         return True
     return False
@@ -204,10 +212,10 @@ def prune(tree):
                 null_children_indices.append(null_children_index)
                 tree_positions = recur_delete(tree_positions, null_children_index)
         
-    #Very hacky, perhaps there's a better way to remove branches of a tree:
+    # Remove branches of a tree by converting tree to string, finding and deleting patterns,
+    #   and converting string back to tree (very hacky, perhaps there's a safer way):
     import re
     pruned_tree = re.sub( '\s+', ' ', str(tree)).strip()
-    #print(null_children_indices)
     prune_keys = [str(tree[index]) for index in null_children_indices]
     prune_keys.sort(key=len, reverse=True)
     for prune_key in prune_keys: 
