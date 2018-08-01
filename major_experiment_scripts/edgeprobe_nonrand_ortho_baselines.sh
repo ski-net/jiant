@@ -6,8 +6,9 @@
 NOTIFY_EMAIL=$1
 
 function run_exp() {
-    OVERRIDES="exp_name=elmo-full-$1, run_name=run"
-    OVERRIDES+=", eval_tasks=$1, elmo_chars_only=0"
+    OVERRIDES="exp_name=elmo-nonrand-ortho-$1, run_name=run"
+    OVERRIDES+=", train_tasks=$1, elmo_chars_only=0"
+    OVERRIDES+=", eval_tasks=$1, elmo_weight_file_path=/nfs/jsalt/home/berlin/elmo_2x4096_512_2048cnn_2xhighway_weights_nonrand_ortho.hdf5"
     python main.py --config_file config/edgeprobe_bare.conf \
         -o "${OVERRIDES}" \
         --remote_log --notify "$NOTIFY_EMAIL"
@@ -18,19 +19,12 @@ set -eux
 cd $(dirname $0)
 pushd "${PWD%jiant*}/jiant"
 
-# Small tasks
+run_exp "edges-srl-conll2005"
 run_exp "edges-spr2"
 run_exp "edges-dpr"
+run_exp "edges-coref-ontonotes"
 run_exp "edges-dep-labeling"
 run_exp "edges-ner-conll2003"
+run_exp "edges-constituent-ptb"
 
-# OntoNotes
-run_exp "edges-srl-conll2012"
-run_exp "edges-coref-ontonotes-conll"
-run_exp "edges-ner-ontonotes"
-run_exp "edges-constituent-ontonotes"
-
-# run_exp "edges-srl-conll2005"
-# run_exp "edges-coref-ontonotes"
-# run_exp "edges-constituent-ptb"
-# run_exp "edges-ccg-tag"
+#sudo poweroff

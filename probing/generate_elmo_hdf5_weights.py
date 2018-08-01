@@ -21,8 +21,8 @@ ELMO_WEIGHTS_PATH ='/nfs/jsalt/share/elmo/elmo_2x4096_512_2048cnn_2xhighway_weig
 def main(args):
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', dest='elmo_model', type=str, required=True,
-                        choices=['random', 'ortho'], help="Type of ELMo weights: random or ortho.")
-    parser.add_argument('-s', dest='seed', type=int, required=True, default=0,
+                        choices=['random', 'ortho', 'nonrand_ortho'], help="Type of ELMo weights: random, ortho, nonrand_ortho.")
+    parser.add_argument('-s', dest='seed', type=int, required=False, default=0,
                         help="Random seed for modifying RNN weights.")
     parser.add_argument('-o', dest='output_filename', type=str, required=True,
                         help="Name of the output (hdf5 file containing modified ELMo weights).")
@@ -40,10 +40,11 @@ def main(args):
     for i in range(2): #BI-LSTM, so two RNNs
         for path in list_of_paths_to_LSTM_weights:
             weight_tensor = ELMo_weight_file['RNN_' + str(i) +  '/RNN/MultiRNNCell/' + path]
-            shape = weight_tensor.shape
-            weight_tensor[...] = np.random.normal(0, 1, list(shape))
+            if elmo_model != 'nonrand_ortho':
+                shape = weight_tensor.shape
+                weight_tensor[...] = np.random.normal(0, 1, list(shape))
             #In case when we want to convert RNN weights to orthogonal matrices:
-            if elmo_model == 'ortho' and (not path.endswith("/B")): 
+            if elmo_model in ['ortho', 'nonrand_ortho'] and (not path.endswith("/B")): 
                 weight_torch_tensor = torch.tensor(np.array(weight_tensor[...]))
                 weight_tensor[...] = (torch.nn.init.orthogonal_(weight_torch_tensor)).numpy()
     ELMo_weight_file.close()
