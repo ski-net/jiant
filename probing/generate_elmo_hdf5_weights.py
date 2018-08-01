@@ -21,7 +21,7 @@ ELMO_WEIGHTS_PATH ='/nfs/jsalt/share/elmo/elmo_2x4096_512_2048cnn_2xhighway_weig
 def main(args):
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', dest='elmo_model', type=str, required=True,
-                        help="Type of ELMo weights: random or ortho.")
+                        choices=['random', 'ortho'], help="Type of ELMo weights: random or ortho.")
     parser.add_argument('-s', dest='seed', type=int, required=True, default=0,
                         help="Random seed for modifying RNN weights.")
     parser.add_argument('-o', dest='output_filename', type=str, required=True,
@@ -31,10 +31,6 @@ def main(args):
     elmo_model = args.elmo_model #Type of ELMo RNN weights: 'random' or 'ortho'.
     np.random.seed(args.seed)
     ELMo_weight_filename = args.output_filename #ELMo weights file to be written.
-
-    assert elmo_model in ['random', 'ortho'], "Failed to recognize flag elmo_model = " + elmo_model
-
-    #ELMo_weight_filename = 'elmo_2x4096_512_2048cnn_2xhighway_weights_' + elmo_model + '_seed_' + str(args.seed) + '.hdf5' #Name of ELMo-weights file to be written.
 
     ELMo_weight_file = h5py_utils.copy_h5py_file(ELMO_WEIGHTS_PATH, ELMo_weight_filename)
 
