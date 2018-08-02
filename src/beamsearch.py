@@ -3,7 +3,7 @@ from allennlp.common.util import START_SYMBOL, END_SYMBOL
 from torch.autograd import Variable
 import torch.nn.functional as F
 
-from . import bleu_scoring
+
 import numpy as np
 import torch
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
@@ -13,6 +13,10 @@ import torch.nn.functional as F
 from . import bleu_scoring
 
 BEAM_SIZE = 3
+
+
+def _get_word(decoder_vocab, word_idx):
+    return decoder_vocab._index_to_token['targets'][word_idx]
 
 
 """Beam search implementation in PyTorch."""
@@ -85,12 +89,20 @@ class Beam(object):
         # bestScoresId is flattened beam x word array, so calculate which
         # word and beam each score came from
         prev_k = bestScoresId / num_words
-        self.prevKs.append(prev_k)
-        self.nextYs.append(bestScoresId - prev_k * num_words)
 
+        word_idx_beam = bestScoresId - prev_k * num_words
+
+        advance_word_idx_choices = []
+        for i in range(self.size):
+            word_idx = int(word_idx_beam[i].item())
+            word = self.vocab._index_to_token['targets'][word_idx]
+            advance_word_idx_choices.append(word)
+
+        self.prevKs.append(prev_k)
+        self.nextYs.append(word_idx_beam)
 
         print(prev_k)
-        print(bestScoresId - prev_k * num_words)
+        print(advance_word_idx_choices)
         print(self.scores)
 
         # End condition is when top-of-beam is EOS.
@@ -339,7 +351,7 @@ def generate_and_compute_bleu(decoder, encoder_outputs, encoder_outputs_mask,
     targets_unk_ratio = [len([i for i in target if i == decoder._unk_index]) / len(target) for target in targets]
     unk_ratio_macroavg = np.mean(targets_unk_ratio)
 
-    bleu_score = compute_bleu(hyps, scores, relevant_targets)
-    write_translation_preds(hyps, relevant_targets, preds_file_path, decoder_vocab=decoder.vocab)
+    write_translation_preds(hyps_beam, relevant_targets, preds_file_path+'beam{}'.format(BEAM_SIZE), decoder_vocab=decoder.vocab)
+    write_translation_preds(hyps, relevant_targets, preds_file_path+'greedy', decoder_vocab=decoder.vocab)
 
-    return bleu_score, unk_ratio_macroavg
+    return None, unk_ratio_macroavg

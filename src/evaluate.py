@@ -31,7 +31,7 @@ def parse_write_preds_arg(write_preds_arg: str) -> List[str]:
         return write_preds_arg.split(",")
 
 def evaluate(model, tasks: Sequence[tasks_module.Task], batch_size: int,
-             cuda_device: int, split="val") -> Tuple[Dict, pd.DataFrame]:
+             cuda_device: int, split="val", run_dir="") -> Tuple[Dict, pd.DataFrame]:
     '''Evaluate on a dataset'''
     FIELDS_TO_EXPORT = ['idx', 'sent1_str', 'sent2_str', 'labels']
     # Enforce that these tasks have the 'idx' field set.
@@ -42,10 +42,11 @@ def evaluate(model, tasks: Sequence[tasks_module.Task], batch_size: int,
     all_metrics = {"micro_avg": 0.0, "macro_avg": 0.0}
     all_preds = {}
     n_examples_overall = 0
-    
+
     assert len(tasks) > 0 , "Configured to evaluate, but specified no task to evaluate."
 
     for task in tasks:
+        task.preds_file_path = os.path.join(run_dir, "preds{}_{}_eval.txt".format(time.time(), task.name))
         log.info("Evaluating on: %s, split: %s", task.name, split)
         last_log = time.time()
         n_examples = 0
