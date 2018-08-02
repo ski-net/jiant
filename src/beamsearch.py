@@ -71,7 +71,7 @@ class Beam(object):
     #
     # Returns: True if beam search is complete.
 
-    def advance(self, workd_lk):
+    def advance(self, workd_lk, dec_states_hidden_slice, dec_states_context_slice, idx, debug=False):
         """Advance the beam."""
         num_words = workd_lk.size(1)
 
@@ -92,18 +92,25 @@ class Beam(object):
 
         word_idx_beam = bestScoresId - prev_k * num_words
 
-        advance_word_idx_choices = []
-        for i in range(self.size):
-            word_idx = int(word_idx_beam[i].item())
-            word = self.vocab._index_to_token['targets'][word_idx]
-            advance_word_idx_choices.append(word)
+        if debug:
+            advance_word_idx_choices = []
+            for i in range(self.size):
+                word_idx = int(word_idx_beam[i].item())
+                word = self.vocab._index_to_token['targets'][word_idx]
+                advance_word_idx_choices.append(word)
 
         self.prevKs.append(prev_k)
         self.nextYs.append(word_idx_beam)
 
-        print(prev_k)
-        print(advance_word_idx_choices)
-        print(self.scores)
+        # inplace update the decoder states according to the chosen prevK # TODO make more sensible
+        dec_states_hidden_slice[idx] = dec_states_hidden_slice[idx, prev_k, :]
+        dec_states_context_slice[idx] = dec_states_context_slice[idx, prev_k, :]
+        import pdb; pdb.set_trace()
+
+        if debug:
+            print(prev_k)
+            print(advance_word_idx_choices)
+            print(self.scores)
 
         # End condition is when top-of-beam is EOS.
         if self.nextYs[-1][0] == self.eos:
@@ -205,6 +212,16 @@ def beam_search(decoder, encoder_outputs, encoder_outputs_mask, beam_size=BEAM_S
             remaining_sents,
             -1
         ).transpose(0, 1).contiguous()
+        dec_states_hidden_lk = dec_states[0].view(
+            beam_size,
+            remaining_sents,
+            -1
+        ).transpose(0, 1).contiguous()
+        dec_states_context_lk = dec_states[1].view(
+            beam_size,
+            remaining_sents,
+            -1
+        ).transpose(0, 1).contiguous()
 
         active = []
         for b in range(batch_size):
@@ -212,8 +229,13 @@ def beam_search(decoder, encoder_outputs, encoder_outputs_mask, beam_size=BEAM_S
                 continue
 
             idx = batch_idx[b]
-            if not beam[b].advance(word_lk.data[idx]):
+            if not beam[b].advance(word_lk.data[idx], dec_states_hidden_lk, dec_states_context_lk, idx=idx):
                 active += [b]
+            import pdb; pdb.set_trace()
+
+        dec_states_hidden = dec_states_hidden_lk.transpose(1, 0).view(beam_size * remaining_sents, -1).contiguous()
+        dec_states_context = dec_states_context_lk.transpose(1, 0).view(beam_size * remaining_sents, -1).contiguous()
+        dec_states = (dec_states_hidden, dec_states_context)
 
         if not active:
             break
