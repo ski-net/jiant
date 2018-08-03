@@ -1,12 +1,10 @@
 #!/usr/bin/env python
-
 # Helper script to generate edge-probing json file recasted from Penn Treebank.
 #   
-# TODO
 # Usage:
-#  python retokenize_edge_data.py /path/to/edge/probing/data/*.json
+#  python ptb_process.py -env /path/to/nlk/data/env
 #
-# Speed: takes around 2.5 minutes to process 90000 sentences on a single core.
+# Speed: takes roughly 20 minutes to run on a single core.
 
 from __future__ import absolute_import
 from __future__ import print_function
@@ -33,9 +31,17 @@ import part2_helpers
 import pcfg, pcfg_test
 import cky, cky_test
 
+import argparse
 import time
 
-nltk.data.path = ["/nfs/jsalt/share/nltk_data"] + nltk.data.path
+#Constants:
+form_function_discrepancies = ['ADV', 'NOM']
+grammatical_rule = ['DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC']
+adverbials = ['BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP']
+miscellaneous = ['CLR', 'CLF', 'HLN', 'TTL']
+punctuations = ['-LRB-', '-RRB-', '-LCB-', '-RCB-', '-LSB-', '-RSB-']
+#special_labels = ['PRP-S', 'WP-S']
+#fxn_tags = ['ADV', 'NOM', 'DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC', 'BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP', 'CLR', 'CLF', 'HLN', 'TTL']
 
 def check_requirements():
     # Install a few python packages using pip
@@ -44,7 +50,10 @@ def check_requirements():
     if not pkgutil.find_loader("graphviz"):
         pipmain(["install", "graphviz"])
 
-def load_ptb():
+def load_ptb(nltk_data_filepath):
+
+    nltk.data.path = [nltk_data_filepath] + nltk.data.path
+
     # Monkey-patch NLTK with better Tree display that works on Cloud or other display-less server.
     print("Overriding nltk.tree.Tree pretty-printing to use custom GraphViz.")
     treeviz.monkey_patch(nltk.tree.Tree, node_style_fn=None, format='svg')
@@ -86,11 +95,7 @@ def load_ptb():
                 test_sent += [s for s in corpus._parsed_sents(test_file)]
             for dev_full_file in dev_full_files:
                 dev_full_sent += [s for s in corpus._parsed_sents(dev_full_file)]
-
-print("Converting to common JSON format...")
-print("Starting timer.")
-
-t_0 = time.time()
+    return train_sent, dev_sent, dev_full_sent, test_sent
 
 def find_depth(tree, subtree):
     treepositions = tree.treepositions()
@@ -99,18 +104,8 @@ def find_depth(tree, subtree):
             return len(indices)
     raise runtime_error('something is wrong with implementation of find_depth')
 
-#fxn_tags = ['ADV', 'NOM', 'DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC', 'BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP', 'CLR', 'CLF', 'HLN', 'TTL']
-
-form_function_discrepancies = ['ADV', 'NOM']
-grammatical_rule = ['DTV', 'LGS', 'PRD', 'PUT', 'SBJ', 'TPC', 'VOC']
-adverbials = ['BNF', 'DIR', 'EXT', 'LOC', 'MNR', 'PRP', 'TMP']
-miscellaneous = ['CLR', 'CLF', 'HLN', 'TTL']
-
-punctuations = ['-LRB-', '-RRB-', '-LCB-', '-RCB-', '-LSB-', '-RSB-']
-#special_labels = ['PRP-S', 'WP-S']
-
-#function converting Tree object to dictionary compatible with common JSON format
 def sent_to_dict(sentence):
+    '''Function converting Tree object to dictionary compatible with common JSON format'''
     json_d = {}
 
     text = ""
@@ -223,7 +218,15 @@ def prune(tree):
 def main(args):
     check_requirements()
     
-    train_sent, dev_sent, dev_full_sent, test_sent = read_ptb()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-env', dest='nltk_data_filepath', type=str, required=True,
+                        default="/nfs/jsalt/share/nltk_data",
+                        help="Path to nltk ptb data.")
+    args = parser.parse_args(args)
+
+    nltk_data_filepath = args.nltk_data_filepath
+
+    train_sent, dev_sent, dev_full_sent, test_sent = load_ptb(nltk_data_filepath)
     
     print("Converting to common JSON format...")
     print("Starting timer.")
