@@ -1841,7 +1841,7 @@ class RedditSeq2SeqTask(MTTask):
     def __init__(self, path, max_seq_len, max_targ_v_size, name='reddit_s2s'):
         super().__init__(path=path, max_seq_len=max_seq_len,
                          max_targ_v_size=max_targ_v_size, name=name)
-        self._label_namespace = None
+        self._label_namespace = self.name + "_tokens"
         self.target_indexer = {"words": SingleIdTokenIndexer("tokens")}
         self.files_by_split = {"train": os.path.join(path, "train.csv"),
                                "val": os.path.join(path, "val.csv"),
