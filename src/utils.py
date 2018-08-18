@@ -1,8 +1,6 @@
 """
-Assorted utilities for working with neural networks in AllenNLP.
+Assorted utility functions.
 """
-from typing import Dict, List, Sequence, Optional, Union, Iterable
-
 import copy
 import os
 import json
@@ -10,6 +8,7 @@ import random
 import logging
 import codecs
 import time
+from typing import Dict, List, Sequence, Optional, Union, Iterable
 
 import nltk
 from nltk.tokenize.moses import MosesTokenizer, MosesDetokenizer
@@ -17,10 +16,6 @@ from nltk.tokenize.moses import MosesTokenizer, MosesDetokenizer
 import numpy as np
 import torch
 from torch.autograd import Variable
-
-from allennlp.common.checks import ConfigurationError
-
-# Masked Multi headed self attention
 from torch.nn import Dropout, Linear
 from torch.nn import Parameter
 from torch.nn import init
@@ -28,6 +23,9 @@ from torch.nn import init
 from allennlp.nn.util import last_dim_softmax
 from allennlp.modules.seq2seq_encoders.seq2seq_encoder import Seq2SeqEncoder
 from allennlp.common.params import Params
+from allennlp.common.checks import ConfigurationError
+
+from . import utils
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -38,6 +36,43 @@ SOS_TOK, EOS_TOK = "<SOS>", "<EOS>"
 # Note: using the full 'detokenize()' method is not recommended, since it does
 # a poor job of adding correct whitespace. Use unescape_xml() only.
 _MOSES_DETOKENIZER = MosesDetokenizer()
+
+def prepare_fforward(module):
+    ''' Prepare two functional versions of module, train and eval versions '''
+    module.train()
+    forward_train = functionize.make_functional(module)
+    module.eval()
+    forward_eval = functionize.make_functional(module)
+    return forward_train, forward_eval
+
+def reset_parameters(classifier, tgt=None):
+    ''' Reset parameters of module using standard normal '''
+    for ii, p in enumerate(classifier.parameters()):
+        if tgt is None: p.data.normal_(std=0.01)
+        else: p.data = tgt[ii]
+    return classifier
+
+def set_parameters(classifier, theta):
+    ''' Copy parameters from theta into classifier '''
+    for p, t in zip(classifier.parameters(), theta):
+        p.data = t.data.clone()
+    return classifier
+
+def clone_parameters(src, tgt=None):
+    ''' Clone parameters from src (list, dict, or nn.Module of parameters),
+    optionally into a target '''
+    append = False
+    if tgt is None:
+        tgt = []
+        append = True
+    if type(src) != list:
+        src = src.parameters()
+    for ii, p in enumerate(src):
+        if append:
+            tgt.append(p.data.clone())
+        else:
+            tgt[ii].data = p.data.clone()
+    return tgt
 
 def copy_iter(elems):
     '''Simple iterator yielding copies of elements.'''
@@ -99,7 +134,7 @@ def load_model_state(model, state_path, gpu_id, skip_task_models=[], strict=True
 
 
 def get_elmo_mixing_weights(text_field_embedder, task=None):
-    ''' Get pre-softmaxed mixing weights for ELMo from text_field_embedder for a given task. 
+    ''' Get pre-softmaxed mixing weights for ELMo from text_field_embedder for a given task.
     Stops program execution if something goes wrong (e.g. task is malformed, resulting in KeyError).
 
     args:

@@ -21,9 +21,10 @@ from allennlp.data.iterators import BasicIterator, BucketIterator  # pylint: dis
 from allennlp.training.learning_rate_schedulers import LearningRateScheduler  # pylint: disable=import-error
 from allennlp.training.optimizers import Optimizer  # pylint: disable=import-error
 
-from .utils import device_mapping, assert_for_log  # pylint: disable=import-error
+from .utils import device_mapping, assert_for_log
 from .evaluate import evaluate
 from . import config
+from . import utils
 
 
 def build_trainer_params(args, task_names):
@@ -102,12 +103,12 @@ def build_trainer(params, model, run_dir, metric_should_decrease=True):
                            'val_data_limit': params['val_data_limit'],
                            'dec_val_scale': params['dec_val_scale'],
                            'training_data_fraction': params['training_data_fraction']})
-    trainer = SamplingMultiTaskTrainer.from_params(model, run_dir,
-                                                   copy.deepcopy(train_params))
+    trainer = MetaMultiTaskTrainer.from_params(model, run_dir,
+                                               copy.deepcopy(train_params))
     return trainer, train_params, opt_params, schd_params
 
 
-def simulate_sgd(model, batch, sim_lr=0.01):
+def simulate_sgd(model, params, task, batch, fwd_func=None, sim_lr=0.01):
     ''' Given original parameters and a batch of inputs and outputs,
     compute the model's loss evaluated on the given inputs and parameters.
     Then compute the gradient of the loss and update the original params.
@@ -121,10 +122,10 @@ def simulate_sgd(model, batch, sim_lr=0.01):
         - cand_params (List[torch.Tensor]): list of candidate parameter values
         - sim_loss (float?): loss of the model with orig params and the given input on the output
     '''
-    orig_params = model.parameters()
-    sim_loss = model.loss(batch, params=orig_params)
-    grad_orig_params = autograd.grad(sim_loss, orig_params, create_graph=True, allow_unused=False)
-    cand_params = [p + (-sim_lr * g) for g, p in zip(grad_orig_params, orig_params)]
+    sim_out = model(task, batch, fwd_func=fwd_func, params=params)
+    sim_loss = sim_out['loss']
+    grad_orig_params = autograd.grad(sim_loss, params, create_graph=True, allow_unused=False)
+    cand_params = [p + (-sim_lr * g) for g, p in zip(grad_orig_params, params)]
     return cand_params, sim_loss
 
 
@@ -186,6 +187,9 @@ class MetaMultiTaskTrainer():
             of examples. Hashing is used to ensure that the same examples are loaded each epoch.
         """
         self._model = model
+        fwd_func_train, fwd_func_eval = utils.prepare_fforward(model)
+        self._fwd_func_train = fwd_func_train
+        self._fwd_func_eval = fwd_func_eval
 
         self._patience = patience
         self._max_vals = max_vals
@@ -461,7 +465,10 @@ class MetaMultiTaskTrainer():
                 # 1) Get a batch from each task
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
-                cand_params, sim_loss = simulate_sgd(self._model, src_batch)
+                param_clones = utils.clone_parameters(self._model)
+                cand_params, sim_loss = simulate_sgd(self._model, param_clones,
+                                                     src_task, src_batch,
+                                                     fwd_func=self._fwd_func_train)
                 cand_loss = self._model.loss(trg_batch, params=cand_params)
                 cand_loss.backward()
 
