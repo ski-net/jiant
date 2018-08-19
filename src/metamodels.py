@@ -525,6 +525,15 @@ class MultiTaskModel(nn.Module):
         self.utilization = Average() if args.track_batch_utilization else None
         self.elmo = args.elmo and not args.elmo_chars_only
         self.sep_embs_for_skip = args.sep_embs_for_skip
+        self._forward_funcs = {'_single_sentence_forward': self._single_sentence_forward,
+                               '_pair_sentence_forward': self._pair_sentence_forward,
+                               '_positive_pair_sentence_forward': self._positive_pair_sentence_forward,
+                               '_lm_forward': self._lm_forward,
+                               '_vae_forward': self._vae_forward,
+                               '_tagger_forward': self._tagger_forward,
+                               '_seq_gen_forward': self._seq_gen_forward,
+                               '_grounded_ranking_bce_forward': self._grounded_ranking_bce_forward,
+                               '_ranking_forward': self._ranking_forward}
 
 
     def forward(self, task, batch, predict=False, fwd_func=None, params=None):

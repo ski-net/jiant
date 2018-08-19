@@ -25,6 +25,7 @@ from .utils import device_mapping, assert_for_log
 from .evaluate import evaluate
 from . import config
 from . import utils
+from . import functionize
 
 
 def build_trainer_params(args, task_names):
@@ -124,8 +125,8 @@ def simulate_sgd(model, params, task, batch, fwd_func=None, sim_lr=0.01):
     '''
     sim_out = model(task, batch, fwd_func=fwd_func, params=params)
     sim_loss = sim_out['loss']
-    grad_orig_params = autograd.grad(sim_loss, params, create_graph=True, allow_unused=False)
-    cand_params = [p + (-sim_lr * g) for g, p in zip(grad_orig_params, params)]
+    grad_orig_params = autograd.grad(sim_loss, params, create_graph=True, allow_unused=True)
+    cand_params = [p + (-sim_lr * g) if g is not None else p for g, p in zip(grad_orig_params, params)]
     return cand_params, sim_loss
 
 
@@ -446,7 +447,7 @@ class MetaMultiTaskTrainer():
             self._model.train()
             src_task = samples[n_pass % (validation_interval)] # randomly select a src_task
             src_task_info = task_infos[src_task.name]
-            trg_task = samples[(n_pass + validation_interval) / 2 % (validation_interval)]
+            trg_task = samples[int((n_pass + validation_interval) / 2) % (validation_interval)]
             trg_task_info = task_infos[trg_task.name]
             if src_task_info['stopped'] or trg_task_info['stopped']:
                 continue
@@ -466,11 +467,19 @@ class MetaMultiTaskTrainer():
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
                 param_clones = utils.clone_parameters(self._model)
+                for p in param_clones:
+                    p.requires_grad_()
                 cand_params, sim_loss = simulate_sgd(self._model, param_clones,
                                                      src_task, src_batch,
                                                      fwd_func=self._fwd_func_train)
-                cand_loss = self._model.loss(trg_batch, params=cand_params)
+                cand_out = self._model(trg_task, trg_batch, params=cand_params,
+                                       fwd_func=self._fwd_func_train)
+                cand_loss = cand_out['loss']
                 cand_loss.backward()
+
+                src_out = self._model(src_task, src_batch, params=cand_params,
+                                       fwd_func=self._fwd_func_train)
+                tr_loss += src_out['loss']
 
 
                 # Old stuff
@@ -1026,13 +1035,13 @@ class MetaMultiTaskTrainer():
         training_data_fraction = params.pop("training_data_fraction", 1.0)
 
         params.assert_empty(cls.__name__)
-        return SamplingMultiTaskTrainer(model, patience=patience,
-                                        val_interval=val_interval, max_vals=max_vals,
-                                        serialization_dir=serialization_dir,
-                                        cuda_device=cuda_device, grad_norm=grad_norm,
-                                        grad_clipping=grad_clipping, lr_decay=lr_decay,
-                                        min_lr=min_lr, no_tqdm=no_tqdm,
-                                        keep_all_checkpoints=keep_all_checkpoints,
-                                        val_data_limit=val_data_limit,
-                                        dec_val_scale=dec_val_scale,
-                                        training_data_fraction=training_data_fraction)
+        return MetaMultiTaskTrainer(model, patience=patience,
+                                    val_interval=val_interval, max_vals=max_vals,
+                                    serialization_dir=serialization_dir,
+                                    cuda_device=cuda_device, grad_norm=grad_norm,
+                                    grad_clipping=grad_clipping, lr_decay=lr_decay,
+                                    min_lr=min_lr, no_tqdm=no_tqdm,
+                                    keep_all_checkpoints=keep_all_checkpoints,
+                                    val_data_limit=val_data_limit,
+                                    dec_val_scale=dec_val_scale,
+                                    training_data_fraction=training_data_fraction)

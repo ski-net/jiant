@@ -26,6 +26,7 @@ from allennlp.common.params import Params
 from allennlp.common.checks import ConfigurationError
 
 from . import utils
+from . import functionize
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 

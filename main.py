@@ -24,8 +24,6 @@ from src import gcp
 
 from src.utils import assert_for_log, maybe_make_dir, load_model_state
 from src.preprocess import build_tasks
-from src.models import build_model
-from src.trainer import build_trainer, build_trainer_params
 from src.tasks import NLITypeProbingTask
 from src import evaluate
 
@@ -145,6 +143,14 @@ def main(cl_arguments):
     log.info('\tFinished loading tasks in %.3fs', time.time() - start_time)
     log.info('\t Tasks: {}'.format([task.name for task in tasks]))
 
+    if args.metatrain:
+        log.info("\tDOING METATRAINING!")
+        from src.metamodels import build_model
+        from src.metatrainer import build_trainer, build_trainer_params
+    else:
+        from src.models import build_model
+        from src.trainer import build_trainer, build_trainer_params
+
     # Build or load model #
     log.info('Building model...')
     start_time = time.time()
@@ -190,8 +196,8 @@ def main(cl_arguments):
     if cl_args.tensorboard:
         tb_logdir = os.path.join(args.run_dir, "tensorboard")
         _run_background_tensorboard(tb_logdir, cl_args.tensorboard_port)
-
     log.info("Will run the following steps:\n%s", '\n'.join(steps_log))
+
     if args.do_train:
         # Train on train tasks #
         log.info("Training...")
