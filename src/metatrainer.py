@@ -127,7 +127,7 @@ def simulate_sgd(model, params, task, batch, fwd_func=None, sim_lr=0.01):
     sim_loss = sim_out['loss']
     grad_orig_params = autograd.grad(sim_loss, params, create_graph=True, allow_unused=True)
     cand_params = [p + (-sim_lr * g) if g is not None else p for g, p in zip(grad_orig_params, params)]
-    return cand_params, sim_loss
+    return cand_params, sim_out
 
 
 class MetaMultiTaskTrainer():
@@ -299,8 +299,11 @@ class MetaMultiTaskTrainer():
 
             task_info['tr_generator'] = tr_generator
             task_info['loss'] = 0.0
+            task_info['sim_loss'] = 0.0
             task_info['total_batches_trained'] = 0
+            task_info['total_batches_simulated'] = 0
             task_info['n_batches_since_val'] = 0
+            task_info['n_sim_batches_since_val'] = 0
             task_info['optimizer'] = Optimizer.from_params(train_params,
                                                            copy.deepcopy(optimizer_params))
             task_info['scheduler'] = LearningRateScheduler.from_params(
@@ -445,9 +448,9 @@ class MetaMultiTaskTrainer():
         log.info("Beginning training. Stopping metric: %s", stop_metric)
         while not should_stop:
             self._model.train()
-            src_task = samples[n_pass % (validation_interval)] # randomly select a src_task
-            src_task_info = task_infos[src_task.name]
+            src_task = samples[n_pass % (validation_interval)]
             trg_task = samples[int((n_pass + validation_interval) / 2) % (validation_interval)]
+            src_task_info = task_infos[src_task.name]
             trg_task_info = task_infos[trg_task.name]
             if src_task_info['stopped'] or trg_task_info['stopped']:
                 continue
@@ -455,11 +458,14 @@ class MetaMultiTaskTrainer():
             optimizer = g_optimizer if shared_optimizer else src_task_info['optimizer']
             scheduler = g_scheduler if shared_optimizer else src_task_info['scheduler']
             total_batches_trained = src_task_info['total_batches_trained']
+            total_batches_simulated = trg_task_info['total_batches_simulated']
             n_batches_since_val = src_task_info['n_batches_since_val']
-            tr_loss = src_task_info['loss']
+            n_sim_batches_since_val = trg_task_info['n_sim_batches_since_val']
+            src_loss = src_task_info['loss']
+            trg_loss = trg_task_info['sim_loss']
             for src_batch, trg_batch in zip(itertools.islice(src_gen, n_batches_per_pass), itertools.islice(trg_gen, n_batches_per_pass)):
-                n_batches_since_val += 1
-                total_batches_trained += 1
+                n_batches_since_val += 1; total_batches_trained += 1
+                n_sim_batches_since_val += 1; total_batches_simulated += 1
                 optimizer.zero_grad()
 
                 ### START DOING META STUFF ###
@@ -469,24 +475,18 @@ class MetaMultiTaskTrainer():
                 param_clones = utils.clone_parameters(self._model)
                 for p in param_clones:
                     p.requires_grad_()
-                cand_params, sim_loss = simulate_sgd(self._model, param_clones,
-                                                     src_task, src_batch,
-                                                     fwd_func=self._fwd_func_train)
-                cand_out = self._model(trg_task, trg_batch, params=cand_params,
-                                       fwd_func=self._fwd_func_train)
-                cand_loss = cand_out['loss']
-                cand_loss.backward()
+                cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                                                    src_task, src_batch,
+                                                    fwd_func=self._fwd_func_train)
+                trg_out = self._model(trg_task, trg_batch, params=cand_params,
+                                      fwd_func=self._fwd_func_train)
+                trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
+                trg_out['loss'].backward()
 
-                src_out = self._model(src_task, src_batch, params=cand_params,
-                                       fwd_func=self._fwd_func_train)
-                tr_loss += src_out['loss']
+                #src_out = self._model(src_task, src_batch, params=cand_params,
+                #                       fwd_func=self._fwd_func_train)
+                src_loss += sim_out['loss'].item() # loss(src, theta)
 
-
-                # Old stuff
-                #output_dict = self._forward(batch, task=src_task, for_training=True)
-                #assert_for_log("loss" in output_dict,
-                #               "Model must return a dict containing a 'loss' key")
-                #loss = output_dict["loss"]  # optionally scale loss
 
                 # Ignore loss scaling for now
                 #if scaling_method == 'unit' and weighting_method == 'proportional':
@@ -496,16 +496,13 @@ class MetaMultiTaskTrainer():
                 #elif scaling_method == 'min' and weighting_method == 'proportional':
                 #    loss *= (min_weight / src_task_info['n_tr_batches'])
 
-                # More old stuff
-                #loss.backward()
-                #tr_loss += loss.data.cpu().numpy()
-                ### STOP DOING META STUFF ###
 
                 # Gradient regularization and application
                 if self._grad_norm:
                     clip_grad_norm_(self._model.parameters(), self._grad_norm)
                 optimizer.step()
                 n_pass += 1  # update per batch
+                cand_params
 
                 # step scheduler if it's not ReduceLROnPlateau
                 if not isinstance(scheduler.lr_scheduler, ReduceLROnPlateau):
@@ -514,11 +511,15 @@ class MetaMultiTaskTrainer():
             # Update training progress on that src_task
             src_task_info['n_batches_since_val'] = n_batches_since_val
             src_task_info['total_batches_trained'] = total_batches_trained
-            src_task_info['loss'] = tr_loss
+            src_task_info['loss'] = src_loss
+            trg_task_info['n_sim_batches_since_val'] = n_sim_batches_since_val
+            trg_task_info['total_batches_simulated'] = total_batches_simulated
+            trg_task_info['sim_loss'] = trg_loss
 
             # Intermediate log to logger and tensorboard
             if time.time() - src_task_info['last_log'] > self._log_interval:
                 src_task_metrics = src_task.get_metrics()
+                trg_task_metrics = trg_task.get_metrics()
 
                 # log to tensorboard
                 if self._TB_dir is not None:
@@ -527,10 +528,15 @@ class MetaMultiTaskTrainer():
                         float(src_task_info['loss'] / n_batches_since_val)
                     self._metrics_to_tensorboard_tr(n_pass, src_task_metrics_to_TB, src_task.name)
 
-                src_task_metrics["%s_loss" % src_task.name] = tr_loss / n_batches_since_val
-                description = self._description_from_metrics(src_task_metrics)
+                src_task_metrics["%s_loss" % src_task.name] = src_loss / n_batches_since_val
+                trg_task_metrics["%s_sim_loss" % trg_task.name] = trg_loss / n_sim_batches_since_val
+                src_description = self._description_from_metrics(src_task_metrics)
+                trg_description = self._description_from_metrics(trg_task_metrics)
                 log.info("Update %d: src_task %s, batch %d (%d): %s", n_pass,
-                         src_task.name, n_batches_since_val, total_batches_trained, description)
+                         src_task.name, n_batches_since_val,
+                         total_batches_trained, src_description)
+                log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name,
+                         n_sim_batches_since_val, total_batches_simulated, trg_description)
 
                 src_task_info['last_log'] = time.time()
 
@@ -548,16 +554,22 @@ class MetaMultiTaskTrainer():
                 for task in tasks:
                     task_info = task_infos[task.name]
                     n_batches_since_val = task_info['n_batches_since_val']
+                    n_sim_batches_since_val = task_info['n_sim_batches_since_val']
                     if n_batches_since_val > 0:
                         task_metrics = task.get_metrics(reset=True)
                         for name, value in task_metrics.items():
                             all_tr_metrics["%s_%s" % (task.name, name)] = value
                         all_tr_metrics["%s_loss" % task.name] = \
                             float(task_info['loss'] / n_batches_since_val)
+                        all_tr_metrics["%s_sim_loss" % task.name] = \
+                            float(task_info['sim_loss'] / n_sim_batches_since_val)
                     else:
                         all_tr_metrics["%s_loss" % task.name] = 0.0
                     log.info("%s: trained on %d batches, %.3f epochs", task.name,
                              n_batches_since_val, n_batches_since_val / task_info['n_tr_batches'])
+                    log.info("\tsimulated %d batches, %.3f epochs", n_sim_batches_since_val,
+                             n_sim_batches_since_val / task_info['n_tr_batches'])
+
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric(reset=True)
                     log.info("TRAINING BATCH UTILIZATION: %.3f", batch_util)
@@ -687,6 +699,8 @@ class MetaMultiTaskTrainer():
             # Reset training progress
             task_info['n_batches_since_val'] = 0
             task_info['loss'] = 0
+            task_info['n_sim_batches_since_val'] = 0
+            task_info['sim_loss'] = 0
 
         all_val_metrics['micro_avg'] /= n_examples_overall
         all_val_metrics['macro_avg'] /= len(tasks)
