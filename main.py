@@ -183,7 +183,7 @@ def main(cl_arguments):
                         or args.allow_reuse_of_pretraining_parameters \
                         or args.do_train == 0,
                         "If you're pretraining on a task you plan to reuse as a target task, set\n"
-                        "allow_reuse_of_pretraining_parameters = 1(risky), or train in two steps:\n"
+                        "allow_reuse_of_pretraining_parameters = 1 (risky), or train in two steps:\n"
                         "  train with do_train = 1, train_for_eval = 0, stop, and restart with\n"
                         "  do_train = 0 and train_for_eval = 1.")
 
@@ -284,7 +284,8 @@ def main(cl_arguments):
                                        args.shared_optimizer, load_model=False, phase="eval")
 
             # Now that we've trained a model, revert to the normal checkpoint logic for this task.
-            task_names_to_avoid_loading.remove(task.name)
+            if task.name in task_names_to_avoid_loading:
+                task_names_to_avoid_loading.remove(task.name)
 
             # The best checkpoint will accumulate the best parameters for each task.
             # This logic looks strange. We think it works.
