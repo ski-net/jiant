@@ -145,15 +145,15 @@ def main(cl_arguments):
 
     if args.metatrain:
         log.info("\tDOING METATRAINING!")
-        from src.metamodels import build_model
-        from src.metatrainer import build_trainer, build_trainer_params
-    else:
-        from src.models import build_model
-        from src.trainer import build_trainer, build_trainer_params
+        from src import metamodels as mmodels
+        from src import metatrainer as mtrainer
+    from src import models as models
+    from src import trainer as ntrainer
 
     # Build or load model #
     log.info('Building model...')
     start_time = time.time()
+    build_model = mmodels.build_model if args.metatrain else models.build_model
     model = build_model(args, vocab, word_embs, tasks)
     log.info('\tFinished building model in %.3fs', time.time() - start_time)
 
@@ -201,6 +201,8 @@ def main(cl_arguments):
     if args.do_train:
         # Train on train tasks #
         log.info("Training...")
+        build_trainer_params = mtrainer.build_trainer_params if args.metatrain else ntrainer.build_trainer_params
+        build_trainer = mtrainer.build_trainer if args.metatrain else ntrainer.build_trainer
         params = build_trainer_params(args, task_names=[])
         stop_metric = train_tasks[0].val_metric if len(train_tasks) == 1 else 'macro_avg'
         should_decrease = train_tasks[0].val_metric_decreases if len(train_tasks) == 1 else False
@@ -273,10 +275,11 @@ def main(cl_arguments):
             pred_module = getattr(model, "%s_mdl" % task.name)
             to_train = elmo_scalars + [(n, p) for n, p in pred_module.named_parameters() if p.requires_grad]
             # Look for <task_name>_<param_name>, then eval_<param_name>
-            params = build_trainer_params(args, task_names=[task.name, 'eval'])
-            trainer, _, opt_params, schd_params = build_trainer(params, model,
-                                                                args.run_dir,
-                                                                task.val_metric_decreases)
+            log.info("Training task %s with a non-meta trainer", task.name)
+            params = ntrainer.build_trainer_params(args, task_names=[task.name, 'eval'])
+            trainer, _, opt_params, schd_params = ntrainer.build_trainer(params, model,
+                                                                         args.run_dir,
+                                                                         task.val_metric_decreases)
             best_epoch = trainer.train([task], task.val_metric,
                                        args.batch_size, 1,
                                        args.weighting_method, args.scaling_method,
