@@ -443,13 +443,14 @@ class MetaMultiTaskTrainer():
         log.info ("normalized_sample_weights: " + str(normalized_sample_weights) )
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
-        samples = random.choices(tasks, weights=sample_weights, k=validation_interval)
+        samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
+        samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
         all_tr_metrics = {}
         log.info("Beginning training. Stopping metric: %s", stop_metric)
         while not should_stop:
             self._model.train()
-            src_task = samples[n_pass % (validation_interval)]
-            trg_task = samples[int((n_pass + validation_interval) / 2) % (validation_interval)]
+            src_task = samples_src[n_pass % (validation_interval)]
+            trg_task = samples_trg[n_pass % (validation_interval)]
             src_task_info = task_infos[src_task.name]
             trg_task_info = task_infos[trg_task.name]
             if src_task_info['stopped'] or trg_task_info['stopped']:
@@ -606,10 +607,8 @@ class MetaMultiTaskTrainer():
 
                 # Reset training preogress
                 all_tr_metrics = {}
-                samples = random.choices(
-                    tasks,
-                    weights=sample_weights,
-                    k=validation_interval)  # pylint: disable=no-member
+                samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
+                samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
 
                 if should_save:
                     self._save_checkpoint(
