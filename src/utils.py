@@ -58,9 +58,9 @@ def set_parameters(classifier, theta):
         p.data = t.data.clone()
     return classifier
 
-def clone_parameters(src, tgt=None):
+def clone_parameters(src, tgt=None, require_grad=False):
     ''' Clone parameters from src (list, dict, or nn.Module of parameters),
-    optionally into a target '''
+    optionally into a target and optionally requiring a gradient '''
     append = False
     if tgt is None:
         tgt = []
@@ -72,6 +72,9 @@ def clone_parameters(src, tgt=None):
             tgt.append(p.data.clone())
         else:
             tgt[ii].data = p.data.clone()
+    if require_grad:
+        for p in tgt:
+            p.requires_grad_()
     return tgt
 
 def reset_elmo_states(model):

@@ -310,34 +310,10 @@ class MetaMultiTaskTrainer():
         self._metric_infos = metric_infos
         return task_infos, metric_infos
 
-    def train(self, tasks, stop_metric,
-              batch_size, n_batches_per_pass,
-              weighting_method, scaling_method,
-              train_params, optimizer_params, scheduler_params,
-              shared_optimizer=1, load_model=1, phase="main"):
-        """
-        The main training loop.
-        Training will stop if we run out of patience or hit the minimum learning rate.
+    def _setup_task_weighting(self, weighting_method, tasks):
+        ''' Do some stuff related to task weighting '''
+        task_infos = self._task_infos
 
-        Parameters
-        ----------
-        tasks: A list of task objects to train on.
-        stop_metric: The metric to use for early stopping.
-        validation_interval: How many passes between evaluations.
-        n_batches_per_pass: How many training steps per task per pass.
-        weighting_method: How to sample which task to use.
-        scaling_method: How to scale gradients.
-        train_params: Trainer config object.
-        optimizer_params: Optimizer config object.
-        scheduler_params: Scheduler config object.
-        shared_optimizer: Use a single optimizer object for all tasks in MTL. Recommended.
-        load_model: Whether to restore and continue training if a checkpoint is found.
-        phase: Usually 'main' or 'eval'.
-
-        Returns
-        -------
-        Validation results
-        """
         if weighting_method == 'uniform':
             log.info("Sampling tasks uniformly")
         elif weighting_method == 'proportional':
@@ -355,9 +331,69 @@ class MetaMultiTaskTrainer():
         elif weighting_method == 'inverse_log_batch':
             log.info("Sampling tasks inverse to log number of training batches")
         elif 'power_' in weighting_method:
-            log.info("Sampling tasks with %s", weighting_method.replace('_',' of '))
+            log.info("Sampling tasks with %s", weighting_method.replace('_', ' of '))
         elif 'softmax_' in weighting_method:
-            log.info("Sampling tasks with %s", weighting_method.replace('_',' of temperature '))
+            log.info("Sampling tasks with %s", weighting_method.replace('_', ' of temperature '))
+
+        if weighting_method == 'uniform':
+            sample_weights = [1] * len(tasks)
+        elif weighting_method == 'proportional':
+            sample_weights = [task_infos[task.name]['n_tr_batches'] for task in tasks]
+        elif weighting_method == 'proportional_log_batch':  # log(training batch)
+            sample_weights = [math.log(task_infos[task.name]['n_tr_batches']) for task in tasks]
+        elif weighting_method == 'proportional_log_example':  # log(training example)
+            sample_weights = [math.log(task.n_train_examples) for task in tasks]
+        elif weighting_method == 'inverse_example':  # 1/training example
+            sample_weights = [(1 / task.n_train_examples) for task in tasks]
+        elif weighting_method == 'inverse_batch':  # 1/training batch
+            sample_weights = [(1 / task_infos[task.name]['n_tr_batches']) for task in tasks]
+        elif weighting_method == 'inverse_log_example':  # 1/log(training example)
+            sample_weights = [(1 / math.log(task.n_train_examples)) for task in tasks]
+        elif weighting_method == 'inverse_log_batch':  # 1/log(training batch)
+            sample_weights = [(1 / math.log(task_infos[task.name]['n_tr_batches']))
+                              for task in tasks]
+        elif 'power_' in weighting_method:  # x ^ power
+            weighting_power = float(weighting_method.strip('power_'))
+            sample_weights = [(task.n_train_examples ** weighting_power) for task in tasks]
+        elif 'softmax_' in weighting_method:  # exp(x/temp)
+            weighting_temp = float(weighting_method.strip('softmax_'))
+            sample_weights = [math.exp(task.n_train_examples/weighting_temp) for task in tasks]
+        log.info("Weighting details: ")
+        log.info("\ttask.n_train_examples: %s", str([(task.name, task.n_train_examples) for task in tasks]))
+        normalized_sample_weights = [i / sum(sample_weights) for i in sample_weights]
+        log.info("\tnormalized_sample_weights: %s", str(normalized_sample_weights))
+        return sample_weights
+
+    def train(self, tasks, stop_metric,
+              batch_size, n_batches_per_pass,
+              weighting_method, scaling_method,
+              train_params, optimizer_params, scheduler_params,
+              shared_optimizer=1, load_model=1,
+              sim_lr=.01, slow_params_approx=1, phase="main"):
+        """
+        The main training loop.
+        Training will stop if we run out of patience or hit the minimum learning rate.
+
+        Parameters
+        ----------
+        tasks: A list of task objects to train on.
+        stop_metric: The metric to use for early stopping.
+        validation_interval: How many passes between evaluations.
+        n_batches_per_pass: How many training steps per task per pass.
+        weighting_method: How to sample which task to use.
+        scaling_method: How to scale gradients.
+        train_params: Trainer config object.
+        optimizer_params: Optimizer config object.
+        scheduler_params: Scheduler config object.
+        shared_optimizer: Use a single optimizer object for all tasks in MTL. Recommended.
+        load_model: Whether to restore and continue training if a checkpoint is found.
+        slow_params_approx: Whether to assume candidate params ~= params.
+        phase: Usually 'main' or 'eval'.
+
+        Returns
+        -------
+        Validation results
+        """
 
         if scaling_method == 'max':
             # divide by # batches, multiply by max # batches
@@ -381,7 +417,7 @@ class MetaMultiTaskTrainer():
         self._g_scheduler = g_scheduler
 
         n_pass, should_stop = 0, False  # define these here b/c they might get overridden on load
-        if self._serialization_dir is not None and phase != "eval":  # Resume from serialization path
+        if self._serialization_dir is not None and phase != "eval":  # Resume from serialization pth
             if load_model and any(
                     ["model_state_" in x for x in os.listdir(self._serialization_dir)]):
                 n_pass, should_stop = self._restore_checkpoint()
@@ -402,37 +438,8 @@ class MetaMultiTaskTrainer():
                 if parameter.requires_grad:
                     parameter.register_hook(clip_function)
 
-        # Calculate per task sampling weights
-        if weighting_method == 'uniform':
-            sample_weights = [1] * len(tasks)
-        elif weighting_method == 'proportional':
-            sample_weights = [task_infos[task.name]['n_tr_batches'] for task in tasks]
-            max_weight = max(sample_weights)
-            min_weight = min(sample_weights)
-        elif weighting_method == 'proportional_log_batch':  # log(training batch)
-            sample_weights = [math.log(task_infos[task.name]['n_tr_batches']) for task in tasks]
-        elif weighting_method == 'proportional_log_example':  # log(training example)
-            sample_weights = [math.log(task.n_train_examples) for task in tasks]
-        elif weighting_method == 'inverse_example':  # 1/training example
-            sample_weights = [(1 / task.n_train_examples) for task in tasks]
-        elif weighting_method == 'inverse_batch':  # 1/training batch
-            sample_weights = [(1 / task_infos[task.name]['n_tr_batches']) for task in tasks]
-        elif weighting_method == 'inverse_log_example':  # 1/log(training example)
-            sample_weights = [(1 / math.log(task.n_train_examples)) for task in tasks]
-        elif weighting_method == 'inverse_log_batch':  # 1/log(training batch)
-            sample_weights = [(1 / math.log(task_infos[task.name]['n_tr_batches']))
-                              for task in tasks]
-        elif 'power_' in weighting_method:  # x ^ power
-            weighting_power = float(weighting_method.strip('power_'))
-            sample_weights = [(task.n_train_examples ** weighting_power) for task in tasks]
-        elif 'softmax_' in weighting_method:  # exp(x/temp)
-            weighting_temp = float(weighting_method.strip('softmax_'))
-            sample_weights = [math.exp(task.n_train_examples/weighting_temp) for task in tasks]
-        log.info ("Weighting details: ")
-        log.info ("task.n_train_examples: " + str([(task.name, task.n_train_examples) for task in tasks]) )
-        log.info ("weighting_method: " + weighting_method )
-        normalized_sample_weights  = [i/sum(sample_weights) for i in sample_weights]
-        log.info ("normalized_sample_weights: " + str(normalized_sample_weights) )
+        sample_weights = self._setup_task_weighting(weighting_method, tasks)
+        params = self._model.parameters()
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
         samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
@@ -465,21 +472,30 @@ class MetaMultiTaskTrainer():
                 # 1) Get a batch from each task
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
-                param_clones = utils.clone_parameters(self._model)
-                for p in param_clones:
-                    p.requires_grad_()
-                cand_params, sim_out = simulate_sgd(self._model, param_clones,
-                                                    src_task, src_batch,
-                                                    fwd_func=self._fwd_func_train)
-                trg_out = self._model(trg_task, trg_batch, params=cand_params,
-                                      fwd_func=self._fwd_func_train)
-                trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
-                trg_out['loss'].backward()
+                if not slow_params_approx:
+                    param_clones = utils.clone_parameters(self._model)
+                    cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                                                        src_task, src_batch,
+                                                        fwd_func=self._fwd_func_train,
+                                                        sim_lr=sim_lr)
+                    trg_out = self._model(trg_task, trg_batch, params=cand_params,
+                                          fwd_func=self._fwd_func_train)
+                    #src_out = self._model(src_task, src_batch, params=cand_params,
+                    #                       fwd_func=self._fwd_func_train)
 
-                #src_out = self._model(src_task, src_batch, params=cand_params,
-                #                       fwd_func=self._fwd_func_train)
-                src_loss += sim_out['loss'].item() # loss(src, theta)
+                    trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
 
+                    src_loss += sim_out['loss'].item() # loss(src, theta)
+                    loss = trg_out['loss']
+                else: # assume cand_params ~= params
+                    trg_out = self._model(trg_task, trg_batch)
+                    src_out = self._model(src_task, src_batch)
+                    trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
+                    src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
+                    cross_task_reg = torch.dot(trg_grad_params, src_grad_params)
+                    loss = trg_out['loss'] - 2 * sim_lr * cross_task_reg
+
+                loss.backward()
 
                 # Ignore loss scaling for now
                 #if scaling_method == 'unit' and weighting_method == 'proportional':
@@ -495,7 +511,6 @@ class MetaMultiTaskTrainer():
                     clip_grad_norm_(self._model.parameters(), self._grad_norm)
                 optimizer.step()
                 n_pass += 1  # update per batch
-                cand_params
 
                 # step scheduler if it's not ReduceLROnPlateau
                 if not isinstance(scheduler.lr_scheduler, ReduceLROnPlateau):
