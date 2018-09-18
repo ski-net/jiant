@@ -480,9 +480,6 @@ class MetaMultiTaskTrainer():
                                                         sim_lr=sim_lr)
                     trg_out = self._model(trg_task, trg_batch, params=cand_params,
                                           fwd_func=self._fwd_func_train)
-                    #src_out = self._model(src_task, src_batch, params=cand_params,
-                    #                       fwd_func=self._fwd_func_train)
-
                     trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
 
                     param_clones = utils.clone_parameters(self._model, require_grad=True)
@@ -490,9 +487,11 @@ class MetaMultiTaskTrainer():
                                                         src_task, src_batch,
                                                         fwd_func=self._fwd_func_train,
                                                         sim_lr=sim_lr)
+                    src_out = self._model(src_task, src_batch, params=cand_params,
+                                          fwd_func=self._fwd_func_train)
 
-                    src_loss += sim_out['loss'].item() # loss(src, theta)
-                    loss = trg_out['loss']
+                    src_loss += src_out['loss'].item() # loss(src, theta)
+                    loss = trg_out['loss'] + src_out['loss']
                 else: # assume cand_params ~= params
                     trg_out = self._model(trg_task, trg_batch)
                     src_out = self._model(src_task, src_batch)
