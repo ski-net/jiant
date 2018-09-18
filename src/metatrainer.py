@@ -473,7 +473,7 @@ class MetaMultiTaskTrainer():
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
                 if not slow_params_approx:
-                    param_clones = utils.clone_parameters(self._model)
+                    param_clones = utils.clone_parameters(self._model, require_grad=True)
                     cand_params, sim_out = simulate_sgd(self._model, param_clones,
                                                         src_task, src_batch,
                                                         fwd_func=self._fwd_func_train,
@@ -485,6 +485,12 @@ class MetaMultiTaskTrainer():
 
                     trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
 
+                    param_clones = utils.clone_parameters(self._model, require_grad=True)
+                    cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                                                        src_task, src_batch,
+                                                        fwd_func=self._fwd_func_train,
+                                                        sim_lr=sim_lr)
+
                     src_loss += sim_out['loss'].item() # loss(src, theta)
                     loss = trg_out['loss']
                 else: # assume cand_params ~= params
@@ -493,7 +499,7 @@ class MetaMultiTaskTrainer():
                     trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
                     src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
                     cross_task_reg = torch.dot(trg_grad_params, src_grad_params)
-                    loss = trg_out['loss'] - 2 * sim_lr * cross_task_reg
+                    loss = src_out['loss'] + trg_out['loss'] - 2 * sim_lr * cross_task_reg
 
                 loss.backward()
 
