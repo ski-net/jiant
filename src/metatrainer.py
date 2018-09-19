@@ -477,8 +477,8 @@ class MetaMultiTaskTrainer():
                     trg_task_info['loss'] += trg_out['loss']
                     src_task_info['loss'] += src_out['loss']
                 else:
-                    param_clones = utils.clone_parameters(self._model, require_grad=True)
-                    src_cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                    src_param_clones = utils.clone_parameters(self._model, require_grad=True)
+                    src_cand_params, sim_out = simulate_sgd(self._model, src_param_clones,
                                                             src_task, src_batch,
                                                             fwd_func=self._fwd_func_train,
                                                             sim_lr=sim_lr)
@@ -486,8 +486,8 @@ class MetaMultiTaskTrainer():
                                           fwd_func=self._fwd_func_train)
                     trg_task_info['loss'] += trg_out['loss']
 
-                    param_clones = utils.clone_parameters(self._model, require_grad=True)
-                    trg_cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                    trg_param_clones = utils.clone_parameters(self._model, require_grad=True)
+                    trg_cand_params, sim_out = simulate_sgd(self._model, trg_param_clones,
                                                             trg_task, trg_batch,
                                                             fwd_func=self._fwd_func_train,
                                                             sim_lr=sim_lr)
