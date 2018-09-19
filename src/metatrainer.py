@@ -478,20 +478,20 @@ class MetaMultiTaskTrainer():
                     src_task_info['loss'] += src_out['loss']
                 else:
                     param_clones = utils.clone_parameters(self._model, require_grad=True)
-                    cand_params, sim_out = simulate_sgd(self._model, param_clones,
-                                                        src_task, src_batch,
-                                                        fwd_func=self._fwd_func_train,
-                                                        sim_lr=sim_lr)
-                    trg_out = self._model(trg_task, trg_batch, params=cand_params,
+                    src_cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                                                            src_task, src_batch,
+                                                            fwd_func=self._fwd_func_train,
+                                                            sim_lr=sim_lr)
+                    trg_out = self._model(trg_task, trg_batch, params=src_cand_params,
                                           fwd_func=self._fwd_func_train)
                     trg_task_info['loss'] += trg_out['loss']
 
                     param_clones = utils.clone_parameters(self._model, require_grad=True)
-                    cand_params, sim_out = simulate_sgd(self._model, param_clones,
-                                                        src_task, src_batch,
-                                                        fwd_func=self._fwd_func_train,
-                                                        sim_lr=sim_lr)
-                    src_out = self._model(src_task, src_batch, params=cand_params,
+                    trg_cand_params, sim_out = simulate_sgd(self._model, param_clones,
+                                                            trg_task, trg_batch,
+                                                            fwd_func=self._fwd_func_train,
+                                                            sim_lr=sim_lr)
+                    src_out = self._model(src_task, src_batch, params=trg_cand_params,
                                           fwd_func=self._fwd_func_train)
                     src_task_info['loss'] += src_out['loss']
                     loss = trg_out['loss'] + src_out['loss']
@@ -530,6 +530,13 @@ class MetaMultiTaskTrainer():
                          src_task_info['total_batches_trained'], src_description)
                 log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name, trg_nbsv,
                          trg_task_info['total_batches_trained'], trg_description)
+                if slow_params_approx:
+                    log.info("\tupdate loss: %.3f, grad regularizer: %.3f, src loss: %.3f, trg loss: %.3f",
+                             loss, grad_prod_reg, src_out["loss"], trg_out["loss"])
+                else:
+                    log.info("\tupdate loss: %.3f, src loss %.3f, trg loss %.3f", loss,
+                             src_out["loss"], trg_out["loss"])
+
 
                 if self._TB_dir is not None: # log to TB
                     src_task_metrics_to_TB = src_task_metrics.copy()
