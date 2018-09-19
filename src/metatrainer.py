@@ -36,7 +36,8 @@ def build_trainer_params(args, task_names):
                                                             attr_name)
     params = {}
     train_opts = ['optimizer', 'lr', 'batch_size', 'lr_decay_factor',
-                  'task_patience', 'patience', 'scheduler_threshold']
+                  'task_patience', 'patience', 'scheduler_threshold',
+                  'sim_lr', 'slow_params_approx']
     # we want to pass to the build_train()
     extra_opts = ['sent_enc', 'd_hid', 'warmup',
                   'max_grad_norm', 'min_lr', 'batch_size',
@@ -102,7 +103,9 @@ def build_trainer(params, model, run_dir, metric_should_decrease=True):
                            'keep_all_checkpoints': params['keep_all_checkpoints'],
                            'val_data_limit': params['val_data_limit'],
                            'dec_val_scale': params['dec_val_scale'],
-                           'training_data_fraction': params['training_data_fraction']})
+                           'training_data_fraction': params['training_data_fraction'],
+                           'sim_lr': params['sim_lr'],
+                           'slow_params_approx': params['slow_params_approx']})
     trainer = MetaMultiTaskTrainer.from_params(model, run_dir,
                                                copy.deepcopy(train_params))
     return trainer, train_params, opt_params, schd_params
@@ -134,7 +137,8 @@ class MetaMultiTaskTrainer():
                  serialization_dir=None, cuda_device=-1,
                  grad_norm=None, grad_clipping=None, lr_decay=None, min_lr=None,
                  keep_all_checkpoints=False, val_data_limit=5000,
-                 dec_val_scale=100, training_data_fraction=1.0):
+                 dec_val_scale=100, training_data_fraction=1.0,
+                 sim_lr=0.001, slow_params_approx=0):
         """
         The training coordinator. Unusually complicated to handle MTL with tasks of
         diverse sizes.
@@ -194,6 +198,8 @@ class MetaMultiTaskTrainer():
         self._grad_clipping = grad_clipping
         self._lr_decay = lr_decay
         self._min_lr = min_lr
+        self._sim_lr = sim_lr
+        self._slow_params_approx = slow_params_approx
         self._keep_all_checkpoints = keep_all_checkpoints
         self._val_data_limit = val_data_limit
         self._dec_val_scale = dec_val_scale
@@ -291,11 +297,9 @@ class MetaMultiTaskTrainer():
 
             task_info['tr_generator'] = tr_generator
             task_info['loss'] = 0.0
-            task_info['sim_loss'] = 0.0
+            #task_info['sim_loss'] = 0.0
             task_info['total_batches_trained'] = 0
-            task_info['total_batches_simulated'] = 0
             task_info['n_batches_since_val'] = 0
-            task_info['n_sim_batches_since_val'] = 0
             task_info['optimizer'] = Optimizer.from_params(train_params,
                                                            copy.deepcopy(optimizer_params))
             task_info['scheduler'] = LearningRateScheduler.from_params(
@@ -368,8 +372,7 @@ class MetaMultiTaskTrainer():
               batch_size, n_batches_per_pass,
               weighting_method, scaling_method,
               train_params, optimizer_params, scheduler_params,
-              shared_optimizer=1, load_model=1,
-              sim_lr=.01, slow_params_approx=1, phase="main"):
+              shared_optimizer=1, load_model=1, phase="main"):
         """
         The main training loop.
         Training will stop if we run out of patience or hit the minimum learning rate.
@@ -394,16 +397,8 @@ class MetaMultiTaskTrainer():
         -------
         Validation results
         """
-
-        if scaling_method == 'max':
-            # divide by # batches, multiply by max # batches
-            log.info("Scaling losses to largest task")
-        elif scaling_method == 'min':
-            # divide by # batches, multiply by fewest # batches
-            log.info("Scaling losses to the smallest task")
-        elif scaling_method == 'unit':
-            log.info("Dividing losses by number of training batches")
-        validation_interval = self._val_interval
+        validation_interval = int(self._val_interval / 2) # each update, we're actually doing two updates
+        sim_lr, slow_params_approx = self._sim_lr, self._slow_params_approx
         task_infos, metric_infos = self._setup_training(tasks, batch_size, train_params,
                                                         optimizer_params, scheduler_params, phase)
 
@@ -416,12 +411,12 @@ class MetaMultiTaskTrainer():
         self._g_optimizer = g_optimizer
         self._g_scheduler = g_scheduler
 
-        n_pass, should_stop = 0, False  # define these here b/c they might get overridden on load
+        n_update, should_stop = 0, False  # define these here b/c they might get overridden on load
         if self._serialization_dir is not None and phase != "eval":  # Resume from serialization pth
             if load_model and any(
                     ["model_state_" in x for x in os.listdir(self._serialization_dir)]):
-                n_pass, should_stop = self._restore_checkpoint()
-                log.info("Loaded model from checkpoint. Starting at pass %d.", n_pass)
+                n_update, should_stop = self._restore_checkpoint()
+                log.info("Loaded model from checkpoint. Starting at pass %d.", n_update * 2)
             else:
                 log.info("Not loading.")
                 checkpoint_pattern = os.path.join(
@@ -439,7 +434,7 @@ class MetaMultiTaskTrainer():
                     parameter.register_hook(clip_function)
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
-        params = self._model.parameters()
+        params = [p for p in self._model.parameters() if p.requires_grad]
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
         samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
@@ -448,8 +443,8 @@ class MetaMultiTaskTrainer():
         log.info("Beginning training. Stopping metric: %s", stop_metric)
         while not should_stop:
             self._model.train()
-            src_task = samples_src[n_pass % (validation_interval)]
-            trg_task = samples_trg[n_pass % (validation_interval)]
+            src_task = samples_src[n_update % (validation_interval)]
+            trg_task = samples_trg[n_update % (validation_interval)]
             src_task_info = task_infos[src_task.name]
             trg_task_info = task_infos[trg_task.name]
             if src_task_info['stopped'] or trg_task_info['stopped']:
@@ -457,22 +452,31 @@ class MetaMultiTaskTrainer():
             src_gen, trg_gen = src_task_info['tr_generator'], trg_task_info['tr_generator']
             optimizer = g_optimizer if shared_optimizer else src_task_info['optimizer']
             scheduler = g_scheduler if shared_optimizer else src_task_info['scheduler']
-            total_batches_trained = src_task_info['total_batches_trained']
-            total_batches_simulated = trg_task_info['total_batches_simulated']
-            n_batches_since_val = src_task_info['n_batches_since_val']
-            n_sim_batches_since_val = trg_task_info['n_sim_batches_since_val']
-            src_loss = src_task_info['loss']
-            trg_loss = trg_task_info['sim_loss']
             for src_batch, trg_batch in zip(itertools.islice(src_gen, n_batches_per_pass), itertools.islice(trg_gen, n_batches_per_pass)):
-                n_batches_since_val += 1; total_batches_trained += 1
-                n_sim_batches_since_val += 1; total_batches_simulated += 1
+                src_task_info['n_batches_since_val'] += 1
+                trg_task_info['n_batches_since_val'] += 1
+                src_task_info['total_batches_trained'] += 1
+                trg_task_info['total_batches_trained'] += 1
+                n_update += 1  # update per batch
                 optimizer.zero_grad()
 
                 ### START DOING META STUFF ###
                 # 1) Get a batch from each task
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
-                if not slow_params_approx:
+                if slow_params_approx: # assume cand_params ~= params
+                    trg_out = self._model(trg_task, trg_batch)
+                    src_out = self._model(src_task, src_batch)
+                    trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
+                    src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
+                    grad_prod_reg = 0.
+                    for trg_g, src_g in zip(trg_grad_params, src_grad_params):
+                        if trg_g is not None and src_g is not None:
+                            grad_prod_reg += (trg_g * src_g).sum()
+                    loss = src_out['loss'] + trg_out['loss'] - (sim_lr * grad_prod_reg)
+                    trg_task_info['loss'] += trg_out['loss']
+                    src_task_info['loss'] += src_out['loss']
+                else:
                     param_clones = utils.clone_parameters(self._model, require_grad=True)
                     cand_params, sim_out = simulate_sgd(self._model, param_clones,
                                                         src_task, src_batch,
@@ -480,7 +484,7 @@ class MetaMultiTaskTrainer():
                                                         sim_lr=sim_lr)
                     trg_out = self._model(trg_task, trg_batch, params=cand_params,
                                           fwd_func=self._fwd_func_train)
-                    trg_loss += trg_out['loss'].item() # loss(trg, hat{theta})
+                    trg_task_info['loss'] += trg_out['loss']
 
                     param_clones = utils.clone_parameters(self._model, require_grad=True)
                     cand_params, sim_out = simulate_sgd(self._model, param_clones,
@@ -489,17 +493,8 @@ class MetaMultiTaskTrainer():
                                                         sim_lr=sim_lr)
                     src_out = self._model(src_task, src_batch, params=cand_params,
                                           fwd_func=self._fwd_func_train)
-
-                    src_loss += src_out['loss'].item() # loss(src, theta)
+                    src_task_info['loss'] += src_out['loss']
                     loss = trg_out['loss'] + src_out['loss']
-                else: # assume cand_params ~= params
-                    trg_out = self._model(trg_task, trg_batch)
-                    src_out = self._model(src_task, src_batch)
-                    trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
-                    src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
-                    cross_task_reg = torch.dot(trg_grad_params, src_grad_params)
-                    loss = src_out['loss'] + trg_out['loss'] - 2 * sim_lr * cross_task_reg
-
                 loss.backward()
 
                 # Ignore loss scaling for now
@@ -515,73 +510,58 @@ class MetaMultiTaskTrainer():
                 if self._grad_norm:
                     clip_grad_norm_(self._model.parameters(), self._grad_norm)
                 optimizer.step()
-                n_pass += 1  # update per batch
 
                 # step scheduler if it's not ReduceLROnPlateau
                 if not isinstance(scheduler.lr_scheduler, ReduceLROnPlateau):
-                    scheduler.step_batch(n_pass)
-
-            # Update training progress on that src_task
-            src_task_info['n_batches_since_val'] = n_batches_since_val
-            src_task_info['total_batches_trained'] = total_batches_trained
-            src_task_info['loss'] = src_loss
-            trg_task_info['n_sim_batches_since_val'] = n_sim_batches_since_val
-            trg_task_info['total_batches_simulated'] = total_batches_simulated
-            trg_task_info['sim_loss'] = trg_loss
+                    scheduler.step_batch(n_update)
 
             # Intermediate log to logger and tensorboard
             if time.time() - src_task_info['last_log'] > self._log_interval:
                 src_task_metrics = src_task.get_metrics()
                 trg_task_metrics = trg_task.get_metrics()
+                src_nbsv = src_task_info['n_batches_since_val']
+                trg_nbsv = trg_task_info['n_batches_since_val']
 
-                # log to tensorboard
-                if self._TB_dir is not None:
-                    src_task_metrics_to_TB = src_task_metrics.copy()
-                    src_task_metrics_to_TB["loss"] = \
-                        float(src_task_info['loss'] / n_batches_since_val)
-                    self._metrics_to_tensorboard_tr(n_pass, src_task_metrics_to_TB, src_task.name)
-
-                src_task_metrics["%s_loss" % src_task.name] = src_loss / n_batches_since_val
-                trg_task_metrics["%s_sim_loss" % trg_task.name] = trg_loss / n_sim_batches_since_val
+                src_task_metrics["%s_loss" % src_task.name] = src_task_info['loss'] / src_nbsv
+                trg_task_metrics["%s_loss" % trg_task.name] = trg_task_info['loss'] / trg_nbsv
                 src_description = self._description_from_metrics(src_task_metrics)
                 trg_description = self._description_from_metrics(trg_task_metrics)
-                log.info("Update %d: src_task %s, batch %d (%d): %s", n_pass,
-                         src_task.name, n_batches_since_val,
-                         total_batches_trained, src_description)
-                log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name,
-                         n_sim_batches_since_val, total_batches_simulated, trg_description)
+                log.info("Update %d: src_task %s, batch %d (%d): %s", n_update * 2, src_task.name, src_nbsv,
+                         src_task_info['total_batches_trained'], src_description)
+                log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name, trg_nbsv,
+                         trg_task_info['total_batches_trained'], trg_description)
 
-                src_task_info['last_log'] = time.time()
+                if self._TB_dir is not None: # log to TB
+                    src_task_metrics_to_TB = src_task_metrics.copy()
+                    src_task_metrics_to_TB["loss"] = float(src_task_info['loss'] / src_nbsv)
+                    self._metrics_to_tensorboard_tr(n_update, src_task_metrics_to_TB, src_task.name)
 
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric()
                     log.info("TRAINING BATCH UTILIZATION: %.3f", batch_util)
 
+                src_task_info['last_log'] = time.time()
+
             # Validation
-            if n_pass % (validation_interval) == 0:
+            if n_update % (validation_interval) == 0:
 
                 # Dump and log all of our current info
-                epoch = int(n_pass / validation_interval)
-                log.info("***** Pass %d / Epoch %d *****", n_pass, epoch)
+                epoch = int(n_update / validation_interval)
+                log.info("***** Pass %d / Epoch %d *****", n_update * 2, epoch)
                 # Get metrics for all training progress so far
                 for task in tasks:
                     task_info = task_infos[task.name]
                     n_batches_since_val = task_info['n_batches_since_val']
-                    n_sim_batches_since_val = task_info['n_sim_batches_since_val']
                     if n_batches_since_val > 0:
                         task_metrics = task.get_metrics(reset=True)
                         for name, value in task_metrics.items():
                             all_tr_metrics["%s_%s" % (task.name, name)] = value
                         all_tr_metrics["%s_loss" % task.name] = \
                             float(task_info['loss'] / n_batches_since_val)
-                        all_tr_metrics["%s_sim_loss" % task.name] = \
-                            float(task_info['sim_loss'] / n_sim_batches_since_val)
                     else:
                         all_tr_metrics["%s_loss" % task.name] = 0.0
                     log.info("%s: trained on %d batches, %.3f epochs", task.name,
                              n_batches_since_val, n_batches_since_val / task_info['n_tr_batches'])
-                    log.info("\tsimulated %d batches, %.3f epochs", n_sim_batches_since_val,
-                             n_sim_batches_since_val / task_info['n_tr_batches'])
 
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric(reset=True)
@@ -606,7 +586,7 @@ class MetaMultiTaskTrainer():
                         log.info("\ttraining: %3f", all_tr_metrics[name])
                     log.info("\tvalidation: %3f", value)
                 if self._TB_dir is not None:
-                    self._metrics_to_tensorboard_val(n_pass, all_val_metrics)
+                    self._metrics_to_tensorboard_val(n_update, all_val_metrics)
                 lrs = self._get_lr() # log LR
                 for name, value in lrs.items():
                     log.info("%s: %.6f", name, value)
@@ -617,17 +597,17 @@ class MetaMultiTaskTrainer():
                         log.info("\t" + ", ".join(["{}: {:.6f}".format(layer, float(param))
                                                    for layer, param in task_params.items()]))
 
-                # Reset training preogress
+                # Reset training progress
                 all_tr_metrics = {}
                 samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
                 samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
 
                 if should_save:
                     self._save_checkpoint(
-                        {"pass": n_pass, "epoch": epoch, "should_stop": should_stop},
+                        {"pass": n_update, "epoch": epoch, "should_stop": should_stop},
                         phase=phase, new_best_macro=new_best_macro)
 
-        log.info('Stopped training after %d validation checks', n_pass / validation_interval)
+        log.info('Stopped training after %d validation checks', n_update * 2 / validation_interval)
         return self._aggregate_results(tasks, task_infos, metric_infos)  # , validation_interval)
 
     def _aggregate_results(self, tasks, task_infos, metric_infos):
@@ -710,8 +690,6 @@ class MetaMultiTaskTrainer():
             # Reset training progress
             task_info['n_batches_since_val'] = 0
             task_info['loss'] = 0
-            task_info['n_sim_batches_since_val'] = 0
-            task_info['sim_loss'] = 0
 
         all_val_metrics['micro_avg'] /= n_examples_overall
         all_val_metrics['macro_avg'] /= len(tasks)
@@ -1057,6 +1035,8 @@ class MetaMultiTaskTrainer():
         val_data_limit = params.pop("val_data_limit", 5000)
         dec_val_scale = params.pop("dec_val_scale", 100)
         training_data_fraction = params.pop("training_data_fraction", 1.0)
+        sim_lr = params.pop("sim_lr", .001)
+        slow_params_approx = params.pop("slow_params_approx", 0)
 
         params.assert_empty(cls.__name__)
         return MetaMultiTaskTrainer(model, patience=patience,
@@ -1067,4 +1047,5 @@ class MetaMultiTaskTrainer():
                                     min_lr=min_lr, keep_all_checkpoints=keep_all_checkpoints,
                                     val_data_limit=val_data_limit,
                                     dec_val_scale=dec_val_scale,
-                                    training_data_fraction=training_data_fraction)
+                                    training_data_fraction=training_data_fraction,
+                                    sim_lr=sim_lr, slow_params_approx=slow_params_approx)

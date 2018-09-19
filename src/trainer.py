@@ -973,7 +973,7 @@ class SamplingMultiTaskTrainer():
                                         serialization_dir=serialization_dir,
                                         cuda_device=cuda_device, grad_norm=grad_norm,
                                         grad_clipping=grad_clipping, lr_decay=lr_decay,
-                                        min_lr=min_lr, 
+                                        min_lr=min_lr,
                                         keep_all_checkpoints=keep_all_checkpoints,
                                         val_data_limit=val_data_limit,
                                         dec_val_scale=dec_val_scale,

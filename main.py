@@ -147,6 +147,8 @@ def main(cl_arguments):
         log.info("\tDOING METATRAINING!")
         from src import metamodels as mmodels
         from src import metatrainer as mtrainer
+        if args.slow_params_approx:
+            log.info("\t\twith slow parameter approximation")
     from src import models as models
     from src import trainer as ntrainer
 
