@@ -16,24 +16,20 @@ from sklearn.metrics import mean_squared_error
 from allennlp.common import Params
 from allennlp.modules import Elmo, Seq2SeqEncoder, SimilarityFunction, TimeDistributed
 from allennlp.nn import util
-from allennlp.modules.text_field_embedders import BasicTextFieldEmbedder
 from allennlp.modules.token_embedders import Embedding, TokenCharactersEncoder
-from allennlp.modules.similarity_functions import DotProductSimilarity
 from allennlp.modules.seq2vec_encoders import CnnEncoder
 from allennlp.modules.seq2seq_encoders import Seq2SeqEncoder as s2s_e
-from allennlp.modules.seq2seq_encoders import StackedSelfAttentionEncoder, \
-                                              PytorchSeq2SeqWrapper
+from allennlp.modules.seq2seq_encoders import StackedSelfAttentionEncoder
 from allennlp.training.metrics import Average
 
 from .allennlp_mods.elmo_text_field_embedder import ElmoTextFieldEmbedder, ElmoTokenEmbedderWrapper
 from .utils import get_batch_utilization, get_elmo_mixing_weights
 from . import config
 from . import edge_probing
-#from . import beamsearch
 
 from .tasks import CCGTaggingTask, ClassificationTask, CoLATask, EdgeProbingTask, GroundedSWTask, \
     GroundedTask, LanguageModelingTask, MTTask, MultiNLIDiagnosticTask, PairClassificationTask, \
-    PairOrdinalRegressionTask, PairRegressionTask, RankingTask, RedditSeq2SeqTask, RedditTask, \
+    PairOrdinalRegressionTask, PairRegressionTask, RankingTask, RedditSeq2SeqTask, \
     RegressionTask, SequenceGenerationTask, SingleClassificationTask, SSTTask, STSBTask, \
     TaggingTask, VAETask, WeakGroundedTask, Wiki103Seq2SeqTask, JOCITask
 
@@ -223,8 +219,7 @@ def build_embeddings(args, vocab, tasks, pretrained_embs=None):
         assert args.word_embs == "glove", "CoVe requires GloVe embeddings."
         assert d_word == 300, "CoVe expects 300-dimensional GloVe embeddings."
         try:
-            sys.path.append(args.path_to_cove)
-            from cove import MTLSTM as cove_lstm
+            from .cove.cove import MTLSTM as cove_lstm
             # Have CoVe do an internal GloVe lookup, but don't add residual.
             # We'll do this manually in modules.py; see
             # SentenceEncoder.forward().
@@ -349,33 +344,45 @@ def build_module(task, model, d_sent, d_emb, vocab, embedder, args):
         module = edge_probing.EdgeClassifierModule(task, d_sent, task_params)
         setattr(model, '%s_mdl' % task.name, module)
     elif isinstance(task, (RedditSeq2SeqTask, Wiki103Seq2SeqTask)):
-        attention = args.mt_attention
-        log.info("using {} attention".format(attention))
+        attn_type = config.get_task_attr(args, task.name, 's2s_attention')
+        attn_type = args.s2s['attention'] if attn_type is None else attn_type
+        log.info("using {} attention".format(attn_type))
+        #log.info("using {} attention".format(args.s2s['attention']))
         decoder_params = Params({'input_dim': d_sent,
                                  'target_embedding_dim': 300,
+                                 'decoder_hidden_size': args.s2s['d_hid_dec'],
+                                 'output_proj_input_dim': args.s2s['output_proj_input_dim'],
                                  'max_decoding_steps': args.max_seq_len,
                                  'target_namespace': 'tokens',
-                                 'attention': attention,
+                                 #'attention': args.s2s['attention'],
+                                 'attention': attn_type,
                                  'dropout': args.dropout,
                                  'scheduled_sampling_ratio': 0.0})
-        decoder = Seq2SeqDecoder.from_params(vocab, decoder_params)
+        decoder = Seq2SeqDecoder(vocab, **decoder_params)
         setattr(model, '%s_decoder' % task.name, decoder)
     elif isinstance(task, MTTask):
-        attention = args.mt_attention
-        log.info("using {} attention".format(attention))
+        attn_type = config.get_task_attr(args, task.name, 's2s_attention')
+        attn_type = args.s2s['attention'] if attn_type is None else attn_type
+        log.info("using {} attention".format(attn_type))
+        #log.info("using {} attention".format(args.s2s['attention']))
         decoder_params = Params({'input_dim': d_sent,
                                  'target_embedding_dim': 300,
-                                 'max_decoding_steps': 200,
+                                 'decoder_hidden_size': args.s2s['d_hid_dec'],
+                                 'output_proj_input_dim': args.s2s['output_proj_input_dim'],
+                                 'max_decoding_steps': args.max_seq_len,
                                  'target_namespace': task._label_namespace if hasattr(task, '_label_namespace') else 'targets',
-                                 'attention': attention,
+                                 #'attention': args.s2s['attention'],
+                                 'attention': attn_type,
                                  'dropout': args.dropout,
                                  'scheduled_sampling_ratio': 0.0})
-        decoder = Seq2SeqDecoder.from_params(vocab, decoder_params)
+        decoder = Seq2SeqDecoder(vocab, **decoder_params)
         setattr(model, '%s_decoder' % task.name, decoder)
+
     elif isinstance(task, SequenceGenerationTask):
         decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
         setattr(model, '%s_decoder' % task.name, decoder)
         setattr(model, '%s_hid2voc' % task.name, hid2voc)
+
     elif isinstance(task, (GroundedTask, GroundedSWTask)):
         task.img_encoder = CNNEncoder(model_name='resnet', path=task.path)
         pooler = build_image_sent_module(task, d_sent, task_params)
@@ -416,6 +423,7 @@ def get_task_specific_params(args, task_name):
     # Used for edge probing. Other tasks can safely ignore.
     params['cls_loss_fn'] = _get_task_attr("classifier_loss_fn")
     params['cls_span_pooling'] = _get_task_attr("classifier_span_pooling")
+    params['edgeprobe_cnn_context'] = _get_task_attr("edgeprobe_cnn_context")
 
     # For NLI probing tasks, might want to use a classifier trained on
     # something else (typically 'mnli').
@@ -494,10 +502,10 @@ def build_decoder(task, d_inp, vocab, embedder, args):
     ''' Build a task specific decoder '''
     rnn = s2s_e.by_name('lstm').from_params(
         Params({'input_size': embedder.get_output_dim(),
-                'hidden_size': args.d_hid_dec,
-                'num_layers': args.n_layers_dec, 'bidirectional': False}))
+                'hidden_size': args.s2s['d_hid_dec'],
+                'num_layers': args.s2s['n_layers_dec'], 'bidirectional': False}))
     decoder = SentenceEncoder(vocab, embedder, 0, rnn)
-    hid2voc = nn.Linear(args.d_hid_dec, args.max_word_v_size)
+    hid2voc = nn.Linear(args.s2s['d_hid_dec'], args.max_word_v_size)
     return decoder, hid2voc
 
 
@@ -510,11 +518,9 @@ class MultiTaskModel(nn.Module):
         ''' Args: sentence encoder '''
         super(MultiTaskModel, self).__init__()
         self.sent_encoder = sent_encoder
-        self.combine_method = args.sent_combine_method
         self.vocab = vocab
         self.utilization = Average() if args.track_batch_utilization else None
         self.elmo = args.elmo and not args.elmo_chars_only
-        self.reset_elmo_states = args.reset_elmo_states if hasattr(args, "reset_elmo_states") else False
         self.sep_embs_for_skip = args.sep_embs_for_skip
 
 
@@ -657,6 +663,7 @@ class MultiTaskModel(nn.Module):
             So rotating sent1/sent2 and pairing with sent2/sent1 is one way to obtain -ve pairs
         '''
         out = {}
+
         # embed the sentence
         sent1, mask1 = self.sent_encoder(batch['input1'], task)
         sent2, mask2 = self.sent_encoder(batch['input2'], task)
@@ -816,16 +823,6 @@ class MultiTaskModel(nn.Module):
             decoder = getattr(self, "%s_decoder" % task.name)
             out.update(decoder.forward(sent, sent_mask, batch['targs']))
             task.scorer1(out['loss'].item())
-
-            # Commented out for final run (still needs this for further debugging).
-            # We don't want to write predictions during training.
-            #if not self.training and not isinstance(task, Wiki103_Seq2Seq):
-            #    # bleu scoring
-            #    bleu_score, unk_ratio_macroavg = beamsearch.generate_and_compute_bleu(decoder, sent, sent_mask, batch['targs']['words'], preds_file_path=task.preds_file_path, task=task)
-            #    task.scorer2(bleu_score)
-            #    task.scorer3(unk_ratio_macroavg)
-
-            return out
 
         if 'targs' in batch:
             pass

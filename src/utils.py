@@ -19,6 +19,7 @@ from torch.nn import Dropout, Linear
 from torch.nn import Parameter
 from torch.nn import init
 
+from allennlp.common.checks import ConfigurationError
 from allennlp.nn.util import last_dim_softmax
 from allennlp.modules.seq2seq_encoders.seq2seq_encoder import Seq2SeqEncoder
 from allennlp.common.params import Params
@@ -26,6 +27,7 @@ from allennlp.common.checks import ConfigurationError
 
 from . import utils
 from . import functionize
+
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -76,12 +78,6 @@ def clone_parameters(src, tgt=None, require_grad=False):
         for p in tgt:
             p.requires_grad_()
     return tgt
-
-def reset_elmo_states(model):
-    ''' Reset ELMo hidden states if ELMo is detected '''
-    if model.elmo and model.reset_elmo_states:
-        model.sent_encoder._text_field_embedder.token_embedder_elmo._elmo._elmo_lstm._elmo_lstm.reset_states()
-    return
 
 def copy_iter(elems):
     '''Simple iterator yielding copies of elements.'''
