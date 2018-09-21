@@ -45,6 +45,9 @@ class EdgeClassifierModule(nn.Module):
             return EndpointSpanExtractor(self.proj_dim,
                                          combination=self.span_pooling)
 
+    def _make_bow_extractor(self):
+        return SelfAttentiveSpanExtractor(self.proj_dim)
+
     def _make_cnn_layer(self, d_inp):
         """Make a CNN layer as a projection of local context.
 
@@ -62,6 +65,7 @@ class EdgeClassifierModule(nn.Module):
         # Set config options needed for forward pass.
         self.loss_type = task_params['cls_loss_fn']
         self.span_pooling = task_params['cls_span_pooling']
+        self.bow_augment = task_params['edgeprobe_bow_augment']
         self.cnn_context = task_params['edgeprobe_cnn_context']
         self.is_symmetric = task.is_symmetric
         self.single_sided = task.single_sided
@@ -73,26 +77,36 @@ class EdgeClassifierModule(nn.Module):
         # Use these to reduce dimensionality in case we're enumerating a lot of
         # spans - we want to do this *before* extracting spans for greatest
         # efficiency.
+        self.proj0 = nn.Linear(d_inp, self.proj_dim) if self.bow_augment else None
         self.proj1 = self._make_cnn_layer(d_inp)
         if self.is_symmetric or self.single_sided:
             # Use None as dummy padding for readability,
             # so that we can index projs[1] and projs[2]
-            self.projs = [None, self.proj1, self.proj1]
+            self.projs = [self.proj0, self.proj1, self.proj1]
         else:
             # Separate params for span2
             self.proj2 = self._make_cnn_layer(d_inp)
-            self.projs = [None, self.proj1, self.proj2]
+            self.projs = [self.proj0, self.proj1, self.proj2]
 
         # Span extractor, shared for both span1 and span2.
+        self.bow_extractor = (self._make_bow_extractor()
+                              if self.bow_augment else None)
         self.span_extractor1 = self._make_span_extractor()
         if self.is_symmetric or self.single_sided:
-            self.span_extractors = [None, self.span_extractor1, self.span_extractor1]
+            self.span_extractors = [self.bow_extractor,
+                                    self.span_extractor1,
+                                    self.span_extractor1]
         else:
             self.span_extractor2 = self._make_span_extractor()
-            self.span_extractors = [None, self.span_extractor1, self.span_extractor2]
+            self.span_extractors = [self.bow_extractor,
+                                    self.span_extractor1,
+                                    self.span_extractor2]
 
         # Classifier gets concatenated projections of span1, span2
-        clf_input_dim = self.span_extractors[1].get_output_dim()
+        clf_input_dim = 0
+        if self.bow_augment:
+            clf_input_dim += self.span_extractors[0].get_output_dim()
+        clf_input_dim += self.span_extractors[1].get_output_dim()
         if not self.single_sided:
             clf_input_dim += self.span_extractors[2].get_output_dim()
         self.classifier = modules.Classifier.from_params(clf_input_dim,
@@ -130,6 +144,8 @@ class EdgeClassifierModule(nn.Module):
         batch_size = sent_embs.shape[0]
         out['n_inputs'] = batch_size
 
+        if self.bow_augment:
+            se_proj0 = self.projs[0](sent_embs)
         # Apply projection CNN layer for each span.
         sent_embs_t = sent_embs.transpose(1, 2)  # needed for CNN layer
         se_proj1 = self.projs[1](sent_embs_t).transpose(2, 1).contiguous()
@@ -152,6 +168,19 @@ class EdgeClassifierModule(nn.Module):
             span_emb = torch.cat([span1_emb, span2_emb], dim=2)
         else:
             span_emb = span1_emb
+        if self.bow_augment:
+            zero_col = torch.zeros(sent_mask.size()[0], 1,
+                                   device=sent_mask.device,
+                                   dtype=torch.int64)
+            sentence_lengths = sent_mask.sum(dim=1).long()
+            bow_spans = torch.cat([zero_col, sentence_lengths - 1], dim=1)
+            bow_spans = torch.unsqueeze(bow_spans, dim=1)
+            bow_span_mask = torch.ones_like(span_mask[:,:1])
+            bow_emb = self.span_extractors[0](se_proj0, bow_spans,
+                                              sequence_mask=sent_mask.long(),
+                                              span_indices_mask=bow_span_mask)
+            bow_emb = torch.cat([bow_emb] * span_mask.size()[1], dim=1)
+            span_emb = torch.cat([bow_emb, span_emb], dim=2)
 
         # [batch_size, num_targets, n_classes]
         logits = self.classifier(span_emb)
