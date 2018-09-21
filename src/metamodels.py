@@ -342,44 +342,45 @@ def build_module(task, model, d_sent, d_emb, vocab, embedder, args):
         module = edge_probing.EdgeClassifierModule(task, d_sent, task_params)
         setattr(model, '%s_mdl' % task.name, module)
     elif isinstance(task, (RedditSeq2SeqTask, Wiki103Seq2SeqTask)):
-        attention = args.get("mt_attention", "bilinear")
-        log.info("using {} attention".format(attention))
+        attn_type = config.get_task_attr(args, task.name, 's2s_attention')
+        attn_type = args.s2s['attention'] if attn_type is None else attn_type
+        log.info("using {} attention".format(attn_type))
+        #log.info("using {} attention".format(args.s2s['attention']))
         decoder_params = Params({'input_dim': d_sent,
                                  'target_embedding_dim': 300,
+                                 'decoder_hidden_size': args.s2s['d_hid_dec'],
+                                 'output_proj_input_dim': args.s2s['output_proj_input_dim'],
                                  'max_decoding_steps': args.max_seq_len,
                                  'target_namespace': 'tokens',
-                                 'attention': attention,
+                                 #'attention': args.s2s['attention'],
+                                 'attention': attn_type,
                                  'dropout': args.dropout,
                                  'scheduled_sampling_ratio': 0.0})
-        decoder = Seq2SeqDecoder.from_params(vocab, decoder_params)
+        decoder = Seq2SeqDecoder(vocab, **decoder_params)
         setattr(model, '%s_decoder' % task.name, decoder)
+
     elif isinstance(task, MTTask):
-        attention = args.get("mt_attention", "bilinear")
-        log.info("using {} attention".format(attention))
+        attn_type = config.get_task_attr(args, task.name, 's2s_attention')
+        attn_type = args.s2s['attention'] if attn_type is None else attn_type
+        log.info("using {} attention".format(attn_type))
+        #log.info("using {} attention".format(args.s2s['attention']))
         decoder_params = Params({'input_dim': d_sent,
                                  'target_embedding_dim': 300,
-                                 'max_decoding_steps': 200,
+                                 'decoder_hidden_size': args.s2s['d_hid_dec'],
+                                 'output_proj_input_dim': args.s2s['output_proj_input_dim'],
+                                 'max_decoding_steps': args.max_seq_len,
                                  'target_namespace': task._label_namespace if hasattr(task, '_label_namespace') else 'targets',
-                                 'attention': attention,
+                                 #'attention': args.s2s['attention'],
+                                 'attention': attn_type,
                                  'dropout': args.dropout,
                                  'scheduled_sampling_ratio': 0.0})
-        decoder = Seq2SeqDecoder.from_params(vocab, decoder_params)
+        decoder = Seq2SeqDecoder(vocab, **decoder_params)
         setattr(model, '%s_decoder' % task.name, decoder)
+
     elif isinstance(task, SequenceGenerationTask):
         decoder, hid2voc = build_decoder(task, d_sent, vocab, embedder, args)
         setattr(model, '%s_decoder' % task.name, decoder)
         setattr(model, '%s_hid2voc' % task.name, hid2voc)
-
-    elif isinstance(task, VAETask):
-        decoder_params = Params({'input_dim': d_sent,
-                                 'target_embedding_dim': 300,
-                                 'max_decoding_steps': 200,
-                                 'target_namespace': 'tokens',
-                                 'attention': 'bilinear',
-                                 'dropout': args.dropout,
-                                 'scheduled_sampling_ratio': 0.0})
-        decoder = Seq2SeqDecoder.from_params(vocab, decoder_params)
-        setattr(model, '%s_decoder' % task.name, decoder)
 
     elif isinstance(task, (GroundedTask, GroundedSWTask)):
         task.img_encoder = CNNEncoder(model_name='resnet', path=task.path)
@@ -520,7 +521,6 @@ class MultiTaskModel(nn.Module):
         ''' Args: sentence encoder '''
         super(MultiTaskModel, self).__init__()
         self.sent_encoder = sent_encoder
-        self.combine_method = args.sent_combine_method
         self.vocab = vocab
         self.utilization = Average() if args.track_batch_utilization else None
         self.elmo = args.elmo and not args.elmo_chars_only

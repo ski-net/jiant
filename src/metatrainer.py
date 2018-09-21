@@ -435,6 +435,7 @@ class MetaMultiTaskTrainer():
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
         params = [p for p in self._model.parameters() if p.requires_grad]
+        #shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
         samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
@@ -469,6 +470,9 @@ class MetaMultiTaskTrainer():
                     src_out = self._model(src_task, src_batch)
                     trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
                     src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
+                    #trg_grad_params = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                    #src_grad_params = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
+
                     grad_prod_reg = 0.
                     for trg_g, src_g in zip(trg_grad_params, src_grad_params):
                         if trg_g is not None and src_g is not None:
