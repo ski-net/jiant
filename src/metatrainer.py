@@ -27,6 +27,7 @@ from . import config
 from . import utils
 from . import functionize
 
+N_EXS_IN_MEMORY = 100000
 
 def build_trainer_params(args, task_names):
     ''' In an act of not great code design, we wrote this helper function which
@@ -281,7 +282,7 @@ class MetaMultiTaskTrainer():
                 for pad_field in pad_dict[field]:
                     sorting_keys.append((field, pad_field))
             iterator = BucketIterator(sorting_keys=sorting_keys,
-                                      max_instances_in_memory=10000,
+                                      max_instances_in_memory=N_EXS_IN_MEMORY,
                                       batch_size=batch_size,
                                       biggest_batch_first=True)
             tr_generator = iterator(task.train_data, num_epochs=None, cuda_device=self._cuda_device)
@@ -434,8 +435,11 @@ class MetaMultiTaskTrainer():
                     parameter.register_hook(clip_function)
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
-        params = [p for p in self._model.parameters() if p.requires_grad]
-        #shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
+        share = 0
+        if share:
+            shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
+        else:
+            params = [p for p in self._model.parameters() if p.requires_grad]
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
         samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
@@ -468,10 +472,12 @@ class MetaMultiTaskTrainer():
                 if slow_params_approx: # assume cand_params ~= params
                     trg_out = self._model(trg_task, trg_batch)
                     src_out = self._model(src_task, src_batch)
-                    trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
-                    src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
-                    #trg_grad_params = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
-                    #src_grad_params = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                    if share:
+                        trg_grad_params = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                        src_grad_params = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                    else:
+                        trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
+                        src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
 
                     grad_prod_reg = 0.
                     for trg_g, src_g in zip(trg_grad_params, src_grad_params):
