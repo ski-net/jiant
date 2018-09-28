@@ -398,7 +398,9 @@ class MetaMultiTaskTrainer():
         -------
         Validation results
         """
-        validation_interval = int(self._val_interval / 2) # each update, we're actually doing two updates
+        #validation_interval = int(self._val_interval / 2) # each update, we're actually doing two updates
+        validation_interval = self._val_interval
+        assert_for_log(validation_interval % 2 == 0, "Need an even validation interval!")
         sim_lr, slow_params_approx = self._sim_lr, self._slow_params_approx
         task_infos, metric_infos = self._setup_training(tasks, batch_size, train_params,
                                                         optimizer_params, scheduler_params, phase)
@@ -417,7 +419,7 @@ class MetaMultiTaskTrainer():
             if load_model and any(
                     ["model_state_" in x for x in os.listdir(self._serialization_dir)]):
                 n_update, should_stop = self._restore_checkpoint()
-                log.info("Loaded model from checkpoint. Starting at pass %d.", n_update * 2)
+                log.info("Loaded model from checkpoint. Starting at pass %d.", n_update)
             else:
                 log.info("Not loading.")
                 checkpoint_pattern = os.path.join(
@@ -462,7 +464,7 @@ class MetaMultiTaskTrainer():
                 trg_task_info['n_batches_since_val'] += 1
                 src_task_info['total_batches_trained'] += 1
                 trg_task_info['total_batches_trained'] += 1
-                n_update += 1  # update per batch
+                n_update += 2  # update per batch
                 optimizer.zero_grad()
 
                 ### START DOING META STUFF ###
@@ -537,7 +539,7 @@ class MetaMultiTaskTrainer():
                 trg_task_metrics["%s_loss" % trg_task.name] = trg_task_info['loss'] / trg_nbsv
                 src_description = self._description_from_metrics(src_task_metrics)
                 trg_description = self._description_from_metrics(trg_task_metrics)
-                log.info("Update %d: src_task %s, batch %d (%d): %s", n_update * 2, src_task.name, src_nbsv,
+                log.info("Update %d: src_task %s, batch %d (%d): %s", n_update, src_task.name, src_nbsv,
                          src_task_info['total_batches_trained'], src_description)
                 log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name, trg_nbsv,
                          trg_task_info['total_batches_trained'], trg_description)
@@ -565,7 +567,7 @@ class MetaMultiTaskTrainer():
 
                 # Dump and log all of our current info
                 epoch = int(n_update / validation_interval)
-                log.info("***** Pass %d / Epoch %d *****", n_update * 2, epoch)
+                log.info("***** Pass %d / Epoch %d *****", n_update, epoch)
                 # Get metrics for all training progress so far
                 for task in tasks:
                     task_info = task_infos[task.name]
@@ -625,8 +627,8 @@ class MetaMultiTaskTrainer():
                         {"pass": n_update, "epoch": epoch, "should_stop": should_stop},
                         phase=phase, new_best_macro=new_best_macro)
 
-        log.info('Stopped training after %d validation checks', n_update * 2 / validation_interval)
-        return self._aggregate_results(tasks, task_infos, metric_infos)  # , validation_interval)
+        log.info('Stopped training after %d validation checks', n_update / validation_interval)
+        return self._aggregate_results(tasks, task_infos, metric_infos)
 
     def _aggregate_results(self, tasks, task_infos, metric_infos):
         ''' Helper function to print results after finishing training '''
