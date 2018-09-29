@@ -7,16 +7,17 @@
 get_metrics(): e.g. if task.val_metric = task_name + "_accuracy", then
 task.get_metrics() should return {"accuracy": accuracy_val, ... }
 '''
-import copy
-import collections
-import itertools
 import os
+import copy
 import math
-import logging as log
 import json
-import numpy as np
+import random
+import itertools
+import collections
+import logging as log
 from typing import Iterable, Sequence, List, Dict, Any, Type
 import torch
+import numpy as np
 
 import allennlp.common.util as allennlp_util
 from allennlp.training.metrics import CategoricalAccuracy, \
@@ -1245,24 +1246,31 @@ class STSBAltTask(STSBTask):
         '''STSB'''
         super(STSBAltTask, self).__init__(path, max_seq_len, name)
 
+@register_task(name='snli', rel_path='SNLI/', prefix='')
+@register_task(name='snli10k', rel_path='SNLI/', prefix='10k')
+@register_task(name='snli5k', rel_path='SNLI/', prefix='5k')
+@register_task(name='snli1k', rel_path='SNLI/', prefix='1k')
 class SNLITask(PairClassificationTask):
     ''' Task class for Stanford Natural Language Inference '''
 
-    def __init__(self, path, max_seq_len, name="snli"):
+    def __init__(self, path, max_seq_len, prefix, name="snli"):
         ''' Do stuff '''
         super(SNLITask, self).__init__(name, 3)
-        self.load_data(path, max_seq_len)
+        self.load_data(path, prefix, max_seq_len)
         self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
             self.val_data_text[0] + self.val_data_text[1]
 
-    def load_data(self, path, max_seq_len):
+    def load_data(self, path, prefix, max_seq_len):
         ''' Process the dataset located at path.  '''
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
-        tr_data = load_tsv(os.path.join(path, "train.tsv"), max_seq_len, targ_map=targ_map,
+        tr_file = "%s.train.tsv" % prefix if prefix else "train.tsv"
+        val_file = "%s.dev.tsv" % prefix if prefix else "dev.tsv"
+        te_file = "%s.test.tsv" % prefix if prefix else "test.tsv"
+        tr_data = load_tsv(os.path.join(path, tr_file), max_seq_len, targ_map=targ_map,
                            s1_idx=7, s2_idx=8, targ_idx=-1, skip_rows=1)
-        val_data = load_tsv(os.path.join(path, "dev.tsv"), max_seq_len, targ_map=targ_map,
+        val_data = load_tsv(os.path.join(path, val_file), max_seq_len, targ_map=targ_map,
                             s1_idx=7, s2_idx=8, targ_idx=-1, skip_rows=1)
-        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+        te_data = load_tsv(os.path.join(path, te_file), max_seq_len,
                            s1_idx=7, s2_idx=8, targ_idx=None, idx_idx=0, skip_rows=1)
         self.train_data_text = tr_data
         self.val_data_text = val_data
@@ -1611,24 +1619,30 @@ class RTETask(PairClassificationTask):
         self.test_data_text = te_data
         log.info("\tFinished loading RTE.")
 
-
+@register_task(name='qnli', rel_path='QNLI/', prefix='')
+@register_task(name='qnli10k', rel_path='QNLI/', prefix='10k')
+@register_task(name='qnli5k', rel_path='QNLI/', prefix='5k')
+@register_task(name='qnli1k', rel_path='QNLI/', prefix='1k')
 class QNLITask(PairClassificationTask):
     '''Task class for SQuAD NLI'''
 
-    def __init__(self, path, max_seq_len, name="squad"):
+    def __init__(self, path, max_seq_len, prefix, name="qnli"):
         super(QNLITask, self).__init__(name, 2)
-        self.load_data(path, max_seq_len)
+        self.load_data(path, prefix, max_seq_len)
         self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
             self.val_data_text[0] + self.val_data_text[1]
 
-    def load_data(self, path, max_seq_len):
+    def load_data(self, path, prefix, max_seq_len):
         '''Load the data'''
         targ_map = {'not_entailment': 0, 'entailment': 1}
-        tr_data = load_tsv(os.path.join(path, "train.tsv"), max_seq_len, targ_map=targ_map,
+        tr_file = "%s.train.tsv" % prefix if prefix else "train.tsv"
+        val_file = "%s.dev.tsv" % prefix if prefix else "dev.tsv"
+        te_file = "%s.test.tsv" % prefix if prefix else "test.tsv"
+        tr_data = load_tsv(os.path.join(path, tr_file), max_seq_len, targ_map=targ_map,
                            s1_idx=1, s2_idx=2, targ_idx=3, skip_rows=1)
-        val_data = load_tsv(os.path.join(path, "dev.tsv"), max_seq_len, targ_map=targ_map,
+        val_data = load_tsv(os.path.join(path, val_file), max_seq_len, targ_map=targ_map,
                             s1_idx=1, s2_idx=2, targ_idx=3, skip_rows=1)
-        te_data = load_tsv(os.path.join(path, 'test.tsv'), max_seq_len,
+        te_data = load_tsv(os.path.join(path, te_file), max_seq_len,
                            s1_idx=1, s2_idx=2, targ_idx=None, idx_idx=0, skip_rows=1)
         self.train_data_text = tr_data
         self.val_data_text = val_data
@@ -1968,6 +1982,12 @@ class Wiki103Seq2SeqTask(MTTask):
             prev_sent = sent
 
 
+@register_task(name='dissentwiki10k', rel_path='DisSent/wikitext/',
+               prefix='wikitext.dissent.10k')
+@register_task(name='dissentwiki5k', rel_path='DisSent/wikitext/',
+               prefix='wikitext.dissent.5k')
+@register_task(name='dissentwiki1k', rel_path='DisSent/wikitext/',
+               prefix='wikitext.dissent.1k')
 class DisSentTask(PairClassificationTask):
     ''' Task class for DisSent, dataset agnostic.
         Based on Nie, Bennett, and Goodman (2017), but with different datasets.
