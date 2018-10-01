@@ -1247,9 +1247,10 @@ class STSBAltTask(STSBTask):
         super(STSBAltTask, self).__init__(path, max_seq_len, name)
 
 @register_task(name='snli', rel_path='SNLI/', prefix='')
-@register_task(name='snli10k', rel_path='SNLI/', prefix='10k')
-@register_task(name='snli5k', rel_path='SNLI/', prefix='5k')
-@register_task(name='snli1k', rel_path='SNLI/', prefix='1k')
+@register_task(name='snli50k', rel_path='SNLI/', prefix='50000')
+@register_task(name='snli10k', rel_path='SNLI/', prefix='10000')
+@register_task(name='snli5k', rel_path='SNLI/', prefix='5000')
+@register_task(name='snli1k', rel_path='SNLI/', prefix='1000')
 class SNLITask(PairClassificationTask):
     ''' Task class for Stanford Natural Language Inference '''
 
@@ -1620,9 +1621,10 @@ class RTETask(PairClassificationTask):
         log.info("\tFinished loading RTE.")
 
 @register_task(name='qnli', rel_path='QNLI/', prefix='')
-@register_task(name='qnli10k', rel_path='QNLI/', prefix='10k')
-@register_task(name='qnli5k', rel_path='QNLI/', prefix='5k')
-@register_task(name='qnli1k', rel_path='QNLI/', prefix='1k')
+@register_task(name='qnli50k', rel_path='QNLI/', prefix='50000')
+@register_task(name='qnli10k', rel_path='QNLI/', prefix='10000')
+@register_task(name='qnli5k', rel_path='QNLI/', prefix='5000')
+@register_task(name='qnli1k', rel_path='QNLI/', prefix='1000')
 class QNLITask(PairClassificationTask):
     '''Task class for SQuAD NLI'''
 
@@ -1981,13 +1983,14 @@ class Wiki103Seq2SeqTask(MTTask):
             yield _make_instance(prev_sent, sent)
             prev_sent = sent
 
-
+@register_task(name='dissentwiki50k', rel_path='DisSent/wikitext/',
+               prefix='wikitext.dissent.50000')
 @register_task(name='dissentwiki10k', rel_path='DisSent/wikitext/',
-               prefix='wikitext.dissent.10k')
+               prefix='wikitext.dissent.10000')
 @register_task(name='dissentwiki5k', rel_path='DisSent/wikitext/',
-               prefix='wikitext.dissent.5k')
+               prefix='wikitext.dissent.5000')
 @register_task(name='dissentwiki1k', rel_path='DisSent/wikitext/',
-               prefix='wikitext.dissent.1k')
+               prefix='wikitext.dissent.1000')
 class DisSentTask(PairClassificationTask):
     ''' Task class for DisSent, dataset agnostic.
         Based on Nie, Bennett, and Goodman (2017), but with different datasets.

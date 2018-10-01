@@ -214,13 +214,15 @@ class MetaMultiTaskTrainer():
         if self._cuda_device >= 0:
             self._model = self._model.cuda(self._cuda_device)
 
-        self._TB_dir = None
+        self._tb_writers = None
         if self._serialization_dir is not None:
-            self._TB_dir = os.path.join(self._serialization_dir, "tensorboard")
-            self._TB_train_log = SummaryWriter(
-                os.path.join(self._TB_dir, "train"))
-            self._TB_validation_log = SummaryWriter(
-                os.path.join(self._TB_dir, "val"))
+            tb_dir = os.path.join(self._serialization_dir, "tensorboard")
+            self._tb_writers = {"train": SummaryWriter(os.path.join(tb_dir, "train")),
+                                "val": SummaryWriter(os.path.join(tb_dir, "val"))}
+            if slow_params_approx:
+                self._tb_writers["grad"] = SummaryWriter(os.path.join(tb_dir, "grad"))
+                self._tb_writers["gross_loss"] = SummaryWriter(os.path.join(tb_dir, "gross_loss"))
+                self._tb_writers["net_loss"] = SummaryWriter(os.path.join(tb_dir, "net_loss"))
 
     def _check_history(self, metric_history, cur_score, should_decrease=False):
         '''
@@ -438,7 +440,7 @@ class MetaMultiTaskTrainer():
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
         share = 0
-        if share:
+        if share: # only optimize shared params
             shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
         else:
             params = [p for p in self._model.parameters() if p.requires_grad]
@@ -485,7 +487,8 @@ class MetaMultiTaskTrainer():
                     for trg_g, src_g in zip(trg_grad_params, src_grad_params):
                         if trg_g is not None and src_g is not None:
                             grad_prod_reg += (trg_g * src_g).sum()
-                    loss = src_out['loss'] + trg_out['loss'] - (sim_lr * grad_prod_reg)
+                    gross_loss = src_out['loss'] + trg_out['loss']
+                    loss = gross_loss - (sim_lr * grad_prod_reg)
                     trg_task_info['loss'] += trg_out['loss']
                     src_task_info['loss'] += src_out['loss']
                 else:
@@ -546,15 +549,18 @@ class MetaMultiTaskTrainer():
                 if slow_params_approx:
                     log.info("\tupdate loss: %.3f, grad regularizer: %.3f, src loss: %.3f, trg loss: %.3f",
                              loss, grad_prod_reg, src_out["loss"], trg_out["loss"])
+                    self._tb_writers["gross_loss"].add_scalar("approx/loss", gross_loss, n_update)
+                    self._tb_writers["grad"].add_scalar("approx/grad_prod", grad_prod_reg, n_update)
+                    self._tb_writers["net_loss"].add_scalar("approx/loss", loss, n_update)
                 else:
                     log.info("\tupdate loss: %.3f, src loss %.3f, trg loss %.3f", loss,
                              src_out["loss"], trg_out["loss"])
 
 
-                if self._TB_dir is not None: # log to TB
-                    src_task_metrics_to_TB = src_task_metrics.copy()
-                    src_task_metrics_to_TB["loss"] = float(src_task_info['loss'] / src_nbsv)
-                    self._metrics_to_tensorboard_tr(n_update, src_task_metrics_to_TB, src_task.name)
+                if self._tb_writers is not None:
+                    src_task_metrics_to_tb = src_task_metrics.copy()
+                    src_task_metrics_to_tb["loss"] = float(src_task_info['loss'] / src_nbsv)
+                    self._write_tensorboard(n_update, src_task_metrics_to_tb, src_task.name)
 
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric()
@@ -605,8 +611,8 @@ class MetaMultiTaskTrainer():
                     if name in all_tr_metrics:
                         log.info("\ttraining: %3f", all_tr_metrics[name])
                     log.info("\tvalidation: %3f", value)
-                if self._TB_dir is not None:
-                    self._metrics_to_tensorboard_val(n_update, all_val_metrics)
+                if self._tb_writers is not None:
+                    self._write_tensorboard(n_update, all_val_metrics, task_name="", train_split=False)
                 lrs = self._get_lr() # log LR
                 for name, value in lrs.items():
                     log.info("%s: %.6f", name, value)
@@ -1017,27 +1023,18 @@ class MetaMultiTaskTrainer():
         training_state = torch.load(training_state_path)
         return training_state["pass"], training_state["should_stop"]
 
-    def _metrics_to_tensorboard_tr(self, epoch, train_metrics, task_name):
-        """
-        Sends all of the train metrics to tensorboard
-        """
-        metric_names = train_metrics.keys()
-
-        for name in metric_names:
-            train_metric = train_metrics.get(name)
-            name = task_name + '/' + task_name + '_' + name
-            self._TB_train_log.add_scalar(name, train_metric, epoch)
-
-    def _metrics_to_tensorboard_val(self, epoch, val_metrics):
-        """
-        Sends all of the val metrics to tensorboard
-        """
-        metric_names = val_metrics.keys()
-
-        for name in metric_names:
-            val_metric = val_metrics.get(name)
-            name = name.split('_')[0] + '/' + name
-            self._TB_validation_log.add_scalar(name, val_metric, epoch)
+    def _write_tensorboard(self, step, metrics, task_name, train_split=True):
+        """ Sends all of the train metrics to tensorboard """
+        for metric_name in metrics:
+            metric_val = metrics.get(metric_name)
+            if train_split:
+                assert_for_log(task_name, "No task name provide to TensorBoard logger!")
+                name = "%s/%s_%s" % (task_name, task_name, metric_name)
+                split = "train"
+            else:
+                name = "%s/%s" % (metric_name.split('_')[0], metric_name)
+                split = "val"
+            self._tb_writers[split].add_scalar(name, metric_val, step)
 
     @classmethod
     def from_params(cls, model, serialization_dir, params):
