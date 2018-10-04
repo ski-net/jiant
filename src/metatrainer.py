@@ -38,7 +38,7 @@ def build_trainer_params(args, task_names):
     params = {}
     train_opts = ['optimizer', 'lr', 'batch_size', 'lr_decay_factor',
                   'task_patience', 'patience', 'scheduler_threshold',
-                  'sim_lr', 'slow_params_approx']
+                  'sim_lr', 'max_sim_grad_norm', 'slow_params_approx']
     # we want to pass to the build_train()
     extra_opts = ['sent_enc', 'd_hid', 'warmup',
                   'max_grad_norm', 'min_lr', 'batch_size',
@@ -97,7 +97,7 @@ def build_trainer(params, model, run_dir, metric_should_decrease=True):
 
     train_params = Params({'cuda_device': params['cuda'],
                            'patience': params['patience'],
-                           'grad_norm': params['max_grad_norm'],
+                           'max_grad_norm': params['max_grad_norm'],
                            'val_interval': params['val_interval'],
                            'max_vals': params['max_vals'],
                            'lr_decay': .99, 'min_lr': params['min_lr'],
@@ -106,6 +106,7 @@ def build_trainer(params, model, run_dir, metric_should_decrease=True):
                            'dec_val_scale': params['dec_val_scale'],
                            'training_data_fraction': params['training_data_fraction'],
                            'sim_lr': params['sim_lr'],
+                           'max_sim_grad_norm': params['max_sim_grad_norm'],
                            'slow_params_approx': params['slow_params_approx']})
     trainer = MetaMultiTaskTrainer.from_params(model, run_dir,
                                                copy.deepcopy(train_params))
@@ -136,10 +137,10 @@ def simulate_sgd(model, params, task, batch, fwd_func=None, sim_lr=0.01):
 class MetaMultiTaskTrainer():
     def __init__(self, model, patience=2, val_interval=100, max_vals=50,
                  serialization_dir=None, cuda_device=-1,
-                 grad_norm=None, grad_clipping=None, lr_decay=None, min_lr=None,
+                 max_grad_norm=None, lr_decay=None, min_lr=None,
                  keep_all_checkpoints=False, val_data_limit=5000,
                  dec_val_scale=100, training_data_fraction=1.0,
-                 sim_lr=0.001, slow_params_approx=0):
+                 sim_lr=0.001, max_sim_grad_norm=5., slow_params_approx=0):
         """
         The training coordinator. Unusually complicated to handle MTL with tasks of
         diverse sizes.
@@ -167,12 +168,8 @@ class MetaMultiTaskTrainer():
             An integer specifying the CUDA device to use. If -1, the CPU is used.
             Multi-gpu training is not currently supported, but will be once the
             Pytorch DataParallel API stabilises.
-        grad_norm : float, optional, (default = None).
+        max_grad_norm : float, optional, (default = None).
             If provided, gradient norms will be rescaled to have a maximum of this value.
-        grad_clipping : ``float``, optional (default = ``None``).
-            If provided, gradients will be clipped `during the backward pass` to have an (absolute)
-            maximum of this value.  If you are getting ``NaNs`` in your gradients during training
-            that are not solved by using ``grad_norm``, you may need this.
         learning_rate_scheduler : PytorchLRScheduler, optional, (default = None)
             A Pytorch learning rate scheduler. The learning rate will be decayed with respect to
             this schedule at the end of each epoch. If you use
@@ -182,7 +179,7 @@ class MetaMultiTaskTrainer():
             best and (if different) most recent.
         val_data_limit: During training, use only the first N examples from the validation set.
             Set to -1 to use all.
-        training_data_fraction: If set to a float between 0 and 1, load only the specified percentage
+        training_data_fraction: If set to a float in [0, 1], load only the specified percentage
             of examples. Hashing is used to ensure that the same examples are loaded each epoch.
         """
         self._model = model
@@ -195,8 +192,8 @@ class MetaMultiTaskTrainer():
         self._val_interval = val_interval
         self._serialization_dir = serialization_dir
         self._cuda_device = cuda_device
-        self._grad_norm = grad_norm
-        self._grad_clipping = grad_clipping
+        self._max_grad_norm = max_grad_norm
+        self._max_sim_grad_norm = max_sim_grad_norm
         self._lr_decay = lr_decay
         self._min_lr = min_lr
         self._sim_lr = sim_lr
@@ -223,6 +220,8 @@ class MetaMultiTaskTrainer():
                 self._tb_writers["grad"] = SummaryWriter(os.path.join(tb_dir, "grad"))
                 self._tb_writers["gross_loss"] = SummaryWriter(os.path.join(tb_dir, "gross_loss"))
                 self._tb_writers["net_loss"] = SummaryWriter(os.path.join(tb_dir, "net_loss"))
+                self._tb_writers["grad1"] = SummaryWriter(os.path.join(tb_dir, "grad1"))
+                self._tb_writers["grad2"] = SummaryWriter(os.path.join(tb_dir, "grad2"))
 
     def _check_history(self, metric_history, cur_score, should_decrease=False):
         '''
@@ -432,14 +431,9 @@ class MetaMultiTaskTrainer():
                                "If you don't want them, delete them or change your experiment name." %
                                self._serialization_dir)
 
-        if self._grad_clipping is not None:  # pylint: disable=invalid-unary-operand-type
-            def clip_function(grad): return grad.clamp(-self._grad_clipping, self._grad_clipping)
-            for parameter in self._model.parameters():
-                if parameter.requires_grad:
-                    parameter.register_hook(clip_function)
-
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
         share = 0
+        max_sim_grad_norm = 25.
         if share: # only optimize shared params
             shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
         else:
@@ -477,18 +471,29 @@ class MetaMultiTaskTrainer():
                     trg_out = self._model(trg_task, trg_batch)
                     src_out = self._model(src_task, src_batch)
                     if share:
-                        trg_grad_params = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
-                        src_grad_params = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                        trg_grads = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                        src_grads = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
                     else:
-                        trg_grad_params = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
-                        src_grad_params = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
+                        trg_grads = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
+                        src_grads = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
+                    trg_grads_flat = torch.cat([t.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
+                    trg_norm = trg_grads_flat.norm()
+                    if max_sim_grad_norm is not None and trg_norm > max_sim_grad_norm:
+                        trg_grads_flat = (max_sim_grad_norm / trg_norm) * trg_grads_flat
+                    src_grads_flat = torch.cat([s.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
+                    src_norm = src_grads_flat.norm()
+                    if max_sim_grad_norm is not None and src_norm > max_sim_grad_norm:
+                        src_grads_flat = (max_sim_grad_norm / src_norm) * src_grads_flat
 
-                    grad_prod_reg = 0.
-                    for trg_g, src_g in zip(trg_grad_params, src_grad_params):
-                        if trg_g is not None and src_g is not None:
-                            grad_prod_reg += (trg_g * src_g).sum()
+                    grad_prod = torch.dot(trg_grads_flat, src_grads_flat)
+                    grad_prod = grad_prod if grad_prod > 0 else 0
+
+                    #grad_prod = 0.
+                    #for trg_g, src_g in zip(trg_grads, src_grads):
+                    #    if trg_g is not None and src_g is not None:
+                    #        grad_prod += (trg_g * src_g).sum()
                     gross_loss = src_out['loss'] + trg_out['loss']
-                    loss = gross_loss - (sim_lr * grad_prod_reg)
+                    loss = gross_loss - (sim_lr * grad_prod)
                     trg_task_info['loss'] += trg_out['loss']
                     src_task_info['loss'] += src_out['loss']
                 else:
@@ -523,8 +528,8 @@ class MetaMultiTaskTrainer():
 
 
                 # Gradient regularization and application
-                if self._grad_norm:
-                    clip_grad_norm_(self._model.parameters(), self._grad_norm)
+                if self._max_grad_norm:
+                    clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
                 optimizer.step()
 
                 # step scheduler if it's not ReduceLROnPlateau
@@ -548,10 +553,15 @@ class MetaMultiTaskTrainer():
                          trg_task_info['total_batches_trained'], trg_description)
                 if slow_params_approx:
                     log.info("\tupdate loss: %.3f, grad regularizer: %.3f, src loss: %.3f, trg loss: %.3f",
-                             loss, grad_prod_reg, src_out["loss"], trg_out["loss"])
+                             loss, grad_prod, src_out["loss"], trg_out["loss"])
                     self._tb_writers["gross_loss"].add_scalar("approx/loss", gross_loss, n_update)
-                    self._tb_writers["grad"].add_scalar("approx/grad_prod", grad_prod_reg, n_update)
+                    self._tb_writers["grad"].add_scalar("approx/grad_prod", grad_prod, n_update)
                     self._tb_writers["net_loss"].add_scalar("approx/loss", loss, n_update)
+                    src_norm = src_grads_flat.norm() # new norms
+                    trg_norm = trg_grads_flat.norm()
+                    self._tb_writers["grad"].add_scalar("approx/cos_sim", grad_prod / (src_norm * trg_norm), n_update)
+                    self._tb_writers["grad1"].add_scalar("approx/grad_mag", src_norm, n_update)
+                    self._tb_writers["grad2"].add_scalar("approx/grad_mag", trg_norm, n_update)
                 else:
                     log.info("\tupdate loss: %.3f, src loss %.3f, trg loss %.3f", loss,
                              src_out["loss"], trg_out["loss"])
@@ -1044,8 +1054,7 @@ class MetaMultiTaskTrainer():
         val_interval = params.pop("val_interval", 100)
         max_vals = params.pop("max_vals", 50)
         cuda_device = params.pop("cuda_device", -1)
-        grad_norm = params.pop("grad_norm", None)
-        grad_clipping = params.pop("grad_clipping", None)
+        max_grad_norm = params.pop("max_grad_norm", None)
         lr_decay = params.pop("lr_decay", None)
         min_lr = params.pop("min_lr", None)
         keep_all_checkpoints = params.pop("keep_all_checkpoints", False)
@@ -1053,16 +1062,18 @@ class MetaMultiTaskTrainer():
         dec_val_scale = params.pop("dec_val_scale", 100)
         training_data_fraction = params.pop("training_data_fraction", 1.0)
         sim_lr = params.pop("sim_lr", .001)
+        max_sim_grad_norm = params.pop("max_sim_grad_norm", None)
         slow_params_approx = params.pop("slow_params_approx", 0)
 
         params.assert_empty(cls.__name__)
         return MetaMultiTaskTrainer(model, patience=patience,
                                     val_interval=val_interval, max_vals=max_vals,
                                     serialization_dir=serialization_dir,
-                                    cuda_device=cuda_device, grad_norm=grad_norm,
-                                    grad_clipping=grad_clipping, lr_decay=lr_decay,
+                                    cuda_device=cuda_device, max_grad_norm=max_grad_norm,
+                                    lr_decay=lr_decay,
                                     min_lr=min_lr, keep_all_checkpoints=keep_all_checkpoints,
                                     val_data_limit=val_data_limit,
                                     dec_val_scale=dec_val_scale,
                                     training_data_fraction=training_data_fraction,
-                                    sim_lr=sim_lr, slow_params_approx=slow_params_approx)
+                                    sim_lr=sim_lr, max_sim_grad_norm=max_sim_grad_norm,
+                                    slow_params_approx=slow_params_approx)
