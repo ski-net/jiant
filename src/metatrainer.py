@@ -38,7 +38,7 @@ def build_trainer_params(args, task_names):
     params = {}
     train_opts = ['optimizer', 'lr', 'batch_size', 'lr_decay_factor',
                   'task_patience', 'patience', 'scheduler_threshold',
-                  'sim_lr', 'max_sim_grad_norm', 'slow_params_approx']
+                  'sim_lr', 'max_sim_grad_norm', 'slow_params_approx', 'only_pos_reg']
     # we want to pass to the build_train()
     extra_opts = ['sent_enc', 'd_hid', 'warmup',
                   'max_grad_norm', 'min_lr', 'batch_size',
@@ -107,7 +107,8 @@ def build_trainer(params, model, run_dir, metric_should_decrease=True):
                            'training_data_fraction': params['training_data_fraction'],
                            'sim_lr': params['sim_lr'],
                            'max_sim_grad_norm': params['max_sim_grad_norm'],
-                           'slow_params_approx': params['slow_params_approx']})
+                           'slow_params_approx': params['slow_params_approx'],
+                           'only_pos_reg': params['only_pos_reg']})
     trainer = MetaMultiTaskTrainer.from_params(model, run_dir,
                                                copy.deepcopy(train_params))
     return trainer, train_params, opt_params, schd_params
@@ -140,7 +141,8 @@ class MetaMultiTaskTrainer():
                  max_grad_norm=None, lr_decay=None, min_lr=None,
                  keep_all_checkpoints=False, val_data_limit=5000,
                  dec_val_scale=100, training_data_fraction=1.0,
-                 sim_lr=0.001, max_sim_grad_norm=5., slow_params_approx=0):
+                 sim_lr=0.001, max_sim_grad_norm=5.,
+                 slow_params_approx=0, only_pos_reg=0):
         """
         The training coordinator. Unusually complicated to handle MTL with tasks of
         diverse sizes.
@@ -198,6 +200,7 @@ class MetaMultiTaskTrainer():
         self._min_lr = min_lr
         self._sim_lr = sim_lr
         self._slow_params_approx = slow_params_approx
+        self._only_pos_reg = only_pos_reg
         self._keep_all_checkpoints = keep_all_checkpoints
         self._val_data_limit = val_data_limit
         self._dec_val_scale = dec_val_scale
@@ -433,7 +436,8 @@ class MetaMultiTaskTrainer():
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
         share = 0
-        max_sim_grad_norm = 25.
+        only_pos_reg = self._only_pos_reg
+        max_sim_grad_norm = self._max_sim_grad_norm
         if share: # only optimize shared params
             shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
         else:
@@ -486,7 +490,8 @@ class MetaMultiTaskTrainer():
                         src_grads_flat = (max_sim_grad_norm / src_norm) * src_grads_flat
 
                     grad_prod = torch.dot(trg_grads_flat, src_grads_flat)
-                    grad_prod = grad_prod if grad_prod > 0 else 0
+                    if only_pos_reg:
+                        grad_prod = grad_prod if grad_prod > 0 else 0
 
                     #grad_prod = 0.
                     #for trg_g, src_g in zip(trg_grads, src_grads):
@@ -1064,6 +1069,7 @@ class MetaMultiTaskTrainer():
         sim_lr = params.pop("sim_lr", .001)
         max_sim_grad_norm = params.pop("max_sim_grad_norm", None)
         slow_params_approx = params.pop("slow_params_approx", 0)
+        only_pos_reg = params.pop("only_pos_reg", 0)
 
         params.assert_empty(cls.__name__)
         return MetaMultiTaskTrainer(model, patience=patience,
@@ -1076,4 +1082,4 @@ class MetaMultiTaskTrainer():
                                     dec_val_scale=dec_val_scale,
                                     training_data_fraction=training_data_fraction,
                                     sim_lr=sim_lr, max_sim_grad_norm=max_sim_grad_norm,
-                                    slow_params_approx=slow_params_approx)
+                                    slow_params_approx=slow_params_approx, only_pos_reg=only_pos_reg)

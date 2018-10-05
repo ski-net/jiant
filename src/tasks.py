@@ -1279,34 +1279,40 @@ class SNLITask(PairClassificationTask):
         log.info("\tFinished loading SNLI data.")
 
 
+@register_task('mnli', 'MNLI/', prefix='')
+@register_task('mnli1k', 'MNLI/', prefix='1000')
+@register_task('mnli5k', 'MNLI/', prefix='5000')
+@register_task('mnli10k', 'MNLI/', prefix='10000')
+@register_task('mnli50k', 'MNLI/', prefix='50000')
 class MultiNLITask(PairClassificationTask):
     ''' Task class for Multi-Genre Natural Language Inference '''
 
-    def __init__(self, path, max_seq_len, name="mnli"):
+    def __init__(self, path, max_seq_len, name="mnli", prefix=''):
         '''MNLI'''
         super(MultiNLITask, self).__init__(name, 3)
-        self.load_data(path, max_seq_len)
+        self.load_data(path, max_seq_len, prefix)
         self.sentences = self.train_data_text[0] + self.train_data_text[1] + \
             self.val_data_text[0] + self.val_data_text[1]
 
-    def load_data(self, path, max_seq_len):
+    def load_data(self, path, max_seq_len, prefix):
         '''Process the dataset located at path.'''
+        prefix = prefix + '.' if prefix else prefix
         targ_map = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
-        tr_data = load_tsv(os.path.join(path, 'train.tsv'), max_seq_len,
+        tr_data = load_tsv(os.path.join(path, prefix + 'train.tsv'), max_seq_len,
                            s1_idx=8, s2_idx=9, targ_idx=11, targ_map=targ_map, skip_rows=1)
 
         # Warning to anyone who edits this: The reference label is column *15*, not 11 as above.
-        val_matched_data = load_tsv(os.path.join(path, 'dev_matched.tsv'), max_seq_len,
+        val_matched_data = load_tsv(os.path.join(path, prefix + 'dev_matched.tsv'), max_seq_len,
                                     s1_idx=8, s2_idx=9, targ_idx=15, targ_map=targ_map, skip_rows=1)
-        val_mismatched_data = load_tsv(os.path.join(path, 'dev_mismatched.tsv'), max_seq_len,
+        val_mismatched_data = load_tsv(os.path.join(path, prefix + 'dev_mismatched.tsv'), max_seq_len,
                                        s1_idx=8, s2_idx=9, targ_idx=15, targ_map=targ_map,
                                        skip_rows=1)
         val_data = [m + mm for m, mm in zip(val_matched_data, val_mismatched_data)]
         val_data = tuple(val_data)
 
-        te_matched_data = load_tsv(os.path.join(path, 'test_matched.tsv'), max_seq_len,
+        te_matched_data = load_tsv(os.path.join(path, prefix + 'test_matched.tsv'), max_seq_len,
                                    s1_idx=8, s2_idx=9, targ_idx=None, idx_idx=0, skip_rows=1)
-        te_mismatched_data = load_tsv(os.path.join(path, 'test_mismatched.tsv'), max_seq_len,
+        te_mismatched_data = load_tsv(os.path.join(path, prefix + 'test_mismatched.tsv'), max_seq_len,
                                       s1_idx=8, s2_idx=9, targ_idx=None, idx_idx=0, skip_rows=1)
         te_diagnostic_data = load_tsv(os.path.join(path, 'diagnostic.tsv'), max_seq_len,
                                       s1_idx=1, s2_idx=2, targ_idx=None, idx_idx=0, skip_rows=1)
