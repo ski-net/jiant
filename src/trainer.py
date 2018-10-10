@@ -445,6 +445,7 @@ class SamplingMultiTaskTrainer():
                 # Gradient regularization and application
                 if self._grad_norm:
                     clip_grad_norm_(self._model.parameters(), self._grad_norm)
+
                 optimizer.step()
                 n_pass += 1  # update per batch
 
@@ -474,6 +475,10 @@ class SamplingMultiTaskTrainer():
                          task.name, n_batches_since_val, total_batches_trained, description)
 
                 task_info['last_log'] = time.time()
+
+                grad_norm = np.sum([(pp.grad ** 2).sum().item() for pp in self._model.parameters() if pp.grad is not None])
+                log.info("\tgrad norm: %.3f" % grad_norm)
+
 
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric()
