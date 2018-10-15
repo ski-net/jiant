@@ -21,11 +21,14 @@ from allennlp.data.iterators import BasicIterator, BucketIterator  # pylint: dis
 from allennlp.training.learning_rate_schedulers import LearningRateScheduler  # pylint: disable=import-error
 from allennlp.training.optimizers import Optimizer  # pylint: disable=import-error
 
-from .utils import device_mapping, assert_for_log
+from .utils import device_mapping, assert_for_log, \
+        print_grad_norm_hook, print_norm_hook, stop_on_nan_hook
 from .evaluate import evaluate
 from . import config
 from . import utils
 from . import functionize
+
+import ipdb
 
 N_EXS_IN_MEMORY = 100000
 
@@ -212,7 +215,7 @@ class MetaMultiTaskTrainer():
         self._metric_infos = None
 
         self._log_interval = 10  # seconds
-        self._summary_interval = 100  # num batches between log to tensorboard
+        self._summary_interval = 10  # num batches between log to tensorboard
         if self._cuda_device >= 0:
             self._model = self._model.cuda(self._cuda_device)
 
@@ -436,19 +439,33 @@ class MetaMultiTaskTrainer():
                                "If you don't want them, delete them or change your experiment name." %
                                self._serialization_dir)
 
+        #self._model.mnli5k_mdl.classifier.classifier[0].register_backward_hook(stop_on_nan_hook)
+        #self._model.snli5k_mdl.classifier.classifier[0].register_backward_hook(print_grad_norm_hook)
+        #self._model.snli5k_mdl.classifier.classifier[0].register_backward_hook(print_grad_norm_hook)
+        #self._model.snli5k_mdl.classifier.classifier[2].register_backward_hook(print_grad_norm_hook)
+        #self._model.snli5k_mdl.classifier.classifier[4].register_backward_hook(print_grad_norm_hook)
+        #self._model.snli5k_mdl.attn._matrix_attention.register_backward_hook(print_grad_norm_hook)
+        #self._model.snli5k_mdl.attn._modeling_layer._module.register_backward_hook(print_grad_norm_hook)
+        #self._model.sent_encoder._phrase_layer.fc2.register_backward_hook(stop_on_nan_hook)
+        #self._model.sent_encoder._phrase_layer.fc2.register_backward_hook(print_grad_norm_hook)
+        #self._model.sent_encoder._phrase_layer.fc2.register_forward_hook(print_norm_hook)
+
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
-        share = 0
+        share = 1
         only_pos_reg = self._only_pos_reg
         max_sim_grad_norm = self._max_sim_grad_norm
         cos_sim_approx = self._cos_sim_approx
         if share: # only optimize shared params
-            shared_params = [p for p in self._model.sent_encoder.parameters() if p.requires_grad]
+            shared_params = [p for n, p in self._model.sent_encoder.named_parameters() if p.requires_grad and
+                    not ('_phrase_layer' in n and 'embed' in n)]
         else:
             params = [p for p in self._model.parameters() if p.requires_grad]
 
         # Sample the tasks to train on. Do it all at once (val_interval) for MAX EFFICIENCY.
-        samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
-        samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
+        #samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
+        #samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
+        samples_src = [tasks[0] for _ in range(validation_interval)]
+        samples_trg = [tasks[1] for _ in range(validation_interval)]
         all_tr_metrics = {}
         log.info("Beginning training. Stopping metric: %s", stop_metric)
         while not should_stop:
@@ -485,38 +502,34 @@ class MetaMultiTaskTrainer():
                         src_grads = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
                     trg_grads_flat = torch.cat([t.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
                     src_grads_flat = torch.cat([s.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
-                    trg_norm = trg_grads_flat.norm()
-                    src_norm = src_grads_flat.norm()
-                    if cos_sim_approx:
-                        trg_grads_flat = trg_grads_flat / trg_norm
-                        src_grads_flat = src_grads_flat / src_norm
-                        #print("COSINE SIMILARITY REGULARIZATION")
-                        #grad_prod = grad_prod / (trg_norm * src_norm)
-                        #cos_sim = grad_prod
-                        trg_norm = trg_grads_flat.norm() # should be ~1
-                        src_norm = src_grads_flat.norm()
-                        #print("trg grad norm: %.3f", trg_norm)
-                        #print("src grad norm: %.3f", src_norm)
-                    #else:
-                    #    cos_sim = grad_prod / (trg_norm * src_norm)
-
-                    if max_sim_grad_norm is not None and trg_norm > max_sim_grad_norm:
-                        trg_grads_flat = (max_sim_grad_norm / trg_norm) * trg_grads_flat
-                        #grad_prod = (max_sim_grad_norm / trg_norm) * grad_prod
-                    if max_sim_grad_norm is not None and src_norm > max_sim_grad_norm:
-                        src_grads_flat = (max_sim_grad_norm / src_norm) * src_grads_flat
-                        #grad_prod = (max_sim_grad_norm / src_norm) * grad_prod
 
                     grad_prod = torch.dot(trg_grads_flat, src_grads_flat)
                     if only_pos_reg:
                         #grad_prod = grad_prod if grad_prod > 0 else 0
                         grad_prod = grad_prod if grad_prod < 0 else 0
-                    cos_sim = grad_prod if cos_sim_approx else grad_prod / (trg_norm * src_norm)
+
+                    trg_norm = trg_grads_flat.norm()
+                    src_norm = src_grads_flat.norm()
+                    if cos_sim_approx:
+                        grad_prod = grad_prod / (trg_norm * src_norm)
+                        cos_sim = grad_prod
+                        #trg_grads_flat = trg_grads_flat / trg_norm
+                        #src_grads_flat = src_grads_flat / src_norm
+                        #trg_norm = trg_grads_flat.norm() # these should be 1
+                        #src_norm = src_grads_flat.norm()
+                    else:
+                        cos_sim = grad_prod / (trg_norm * src_norm)
+                        if max_sim_grad_norm is not None and trg_norm > max_sim_grad_norm:
+                            #trg_grads_flat = (max_sim_grad_norm / trg_norm) * trg_grads_flat
+                            grad_prod = (max_sim_grad_norm / trg_norm) * grad_prod
+                        if max_sim_grad_norm is not None and src_norm > max_sim_grad_norm:
+                            #src_grads_flat = (max_sim_grad_norm / src_norm) * src_grads_flat
+                            grad_prod = (max_sim_grad_norm / src_norm) * grad_prod
 
                     gross_loss = src_out['loss'] + trg_out['loss']
                     loss = gross_loss - (sim_lr * grad_prod)
-                    trg_task_info['loss'] += trg_out['loss']
-                    src_task_info['loss'] += src_out['loss']
+                    trg_task_info['loss'] += trg_out['loss'].item()
+                    src_task_info['loss'] += src_out['loss'].item()
                 else:
                     src_param_clones = utils.clone_parameters(self._model, require_grad=True)
                     src_cand_params, sim_out = simulate_sgd(self._model, src_param_clones,
@@ -525,7 +538,7 @@ class MetaMultiTaskTrainer():
                                                             sim_lr=sim_lr)
                     trg_out = self._model(trg_task, trg_batch, params=src_cand_params,
                                           fwd_func=self._fwd_func_train)
-                    trg_task_info['loss'] += trg_out['loss']
+                    trg_task_info['loss'] += trg_out['loss'].item()
 
                     trg_param_clones = utils.clone_parameters(self._model, require_grad=True)
                     trg_cand_params, sim_out = simulate_sgd(self._model, trg_param_clones,
@@ -534,9 +547,25 @@ class MetaMultiTaskTrainer():
                                                             sim_lr=sim_lr)
                     src_out = self._model(src_task, src_batch, params=trg_cand_params,
                                           fwd_func=self._fwd_func_train)
-                    src_task_info['loss'] += src_out['loss']
+                    src_task_info['loss'] += src_out['loss'].item()
                     loss = trg_out['loss'] + src_out['loss']
+
                 loss.backward()
+
+                #sentenc11 = self._model.sent_encoder(src_batch['input1'], src_task)[0]
+                #sentenc12 = self._model.sent_encoder(src_batch['input2'], src_task)[0]
+                #sentenc21 = self._model.sent_encoder(trg_batch['input1'], trg_task)[0]
+                #sentenc22 = self._model.sent_encoder(trg_batch['input2'], trg_task)[0]
+                #log.info("SRC S1 NORM: %.3f", sentenc11.norm())
+                #log.info("SRC S2 NORM: %.3f", sentenc12.norm())
+                #log.info("TRG S1 NORM: %.3f", sentenc21.norm())
+                #log.info("TRG S2 NORM: %.3f", sentenc22.norm())
+                #if torch.isnan(loss).any():
+                #    ipdb.set_trace()
+                #grads = [p.grad for p in shared_params]
+                #if sum([torch.isnan(grad).any().item() for grad in grads]):
+                #    ipdb.set_trace()
+
                 assert_for_log(not torch.isnan(loss).any(), "NaNs in loss.")
 
                 # Ignore loss scaling for now
@@ -573,13 +602,12 @@ class MetaMultiTaskTrainer():
                 log.info("\ttrg_task %s, batch %d (%d): %s", trg_task.name, trg_nbsv,
                          trg_task_info['total_batches_trained'], trg_description)
                 if slow_params_approx:
-                    log.info("\tupdate loss: %.3f, grad regularizer: %.3f, cos_sim: %.3f", loss, grad_prod, cos_sim)
-                    log.info("\t  src loss: %.3f, trg loss: %.3f", src_out["loss"], trg_out["loss"])
+                    log.info("\tnet loss: %.3f, src loss: %.3f, trg loss: %.3f", loss, src_out["loss"], trg_out["loss"])
+                    log.info("\tgrad regularizer: %.3f, cos_sim: %.3f", grad_prod, cos_sim)
+                    log.info("\tgrad1 norm: %.3f, grad2 norm: %.3f", src_norm, trg_norm)
                     self._tb_writers["gross_loss"].add_scalar("approx/loss", gross_loss, n_update)
                     self._tb_writers["grad"].add_scalar("approx/grad_prod", grad_prod, n_update)
                     self._tb_writers["net_loss"].add_scalar("approx/loss", loss, n_update)
-                    #src_norm = src_grads_flat.norm() # new norms
-                    #trg_norm = trg_grads_flat.norm()
                     self._tb_writers["grad"].add_scalar("approx/cos_sim", cos_sim, n_update)
                     self._tb_writers["grad1"].add_scalar("approx/grad_mag", src_norm, n_update)
                     self._tb_writers["grad2"].add_scalar("approx/grad_mag", trg_norm, n_update)
@@ -592,6 +620,9 @@ class MetaMultiTaskTrainer():
                     src_task_metrics_to_tb = src_task_metrics.copy()
                     src_task_metrics_to_tb["loss"] = float(src_task_info['loss'] / src_nbsv)
                     self._write_tensorboard(n_update, src_task_metrics_to_tb, src_task.name)
+                    trg_task_metrics_to_tb = trg_task_metrics.copy()
+                    trg_task_metrics_to_tb["loss"] = float(trg_task_info['loss'] / trg_nbsv)
+                    self._write_tensorboard(n_update, trg_task_metrics_to_tb, trg_task.name)
 
                 if self._model.utilization is not None:
                     batch_util = self._model.utilization.get_metric()
@@ -656,8 +687,10 @@ class MetaMultiTaskTrainer():
 
                 # Reset training progress
                 all_tr_metrics = {}
-                samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
-                samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
+                #samples_src = random.choices(tasks, weights=sample_weights, k=validation_interval)
+                #samples_trg = random.choices(tasks, weights=sample_weights, k=validation_interval)
+                samples_src = [tasks[0] for _ in range(validation_interval)]
+                samples_trg = [tasks[1] for _ in range(validation_interval)]
 
                 if should_save:
                     self._save_checkpoint(

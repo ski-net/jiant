@@ -45,6 +45,7 @@ from . import utils
 from .cnns.alexnet import alexnet
 from .cnns.resnet import resnet101
 from .cnns.inception import inception_v3
+from .models.conv import FConvEncoder
 
 class NullPhraseLayer(nn.Module):
     ''' Dummy phrase layer that does nothing. Exists solely for API compatibility. '''
@@ -164,7 +165,10 @@ class SentenceEncoder(Model):
         sent_mask = util.get_text_field_mask(sent).float()
         sent_lstm_mask = sent_mask if self._mask_lstms else None
         if sent_embs is not None:
-            sent_enc = self._phrase_layer(sent_embs, sent_lstm_mask)
+            if isinstance(self._phrase_layer, FConvEncoder):
+                sent_enc = self._phrase_layer(sent_embs, sent_lstm_mask) # might want to give model the token ids
+            else:
+                sent_enc = self._phrase_layer(sent_embs, sent_lstm_mask)
         else:
             sent_enc = None
 

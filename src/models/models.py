@@ -22,26 +22,27 @@ from allennlp.modules.seq2seq_encoders import Seq2SeqEncoder as s2s_e
 from allennlp.modules.seq2seq_encoders import StackedSelfAttentionEncoder
 from allennlp.training.metrics import Average
 
-from .allennlp_mods.elmo_text_field_embedder import ElmoTextFieldEmbedder, ElmoTokenEmbedderWrapper
-from .utils import get_batch_utilization, get_elmo_mixing_weights
-from . import config
-from . import edge_probing
+from ..allennlp_mods.elmo_text_field_embedder import ElmoTextFieldEmbedder, ElmoTokenEmbedderWrapper
+from ..utils import get_batch_utilization, get_elmo_mixing_weights
+from .. import config
+from .. import edge_probing
 
-from .tasks import CCGTaggingTask, ClassificationTask, CoLATask, EdgeProbingTask, GroundedSWTask, \
+from ..tasks import CCGTaggingTask, ClassificationTask, CoLATask, EdgeProbingTask, GroundedSWTask, \
     GroundedTask, LanguageModelingTask, MTTask, MultiNLIDiagnosticTask, PairClassificationTask, \
     PairOrdinalRegressionTask, PairRegressionTask, RankingTask, RedditSeq2SeqTask, \
     RegressionTask, SequenceGenerationTask, SingleClassificationTask, SSTTask, STSBTask, \
     TaggingTask, VAETask, WeakGroundedTask, Wiki103Seq2SeqTask, JOCITask
 
-from .modules import SentenceEncoder, BoWSentEncoder, \
+from ..modules import SentenceEncoder, BoWSentEncoder, \
     AttnPairEncoder, MaskedStackedSelfAttentionEncoder, \
     BiLMEncoder, ElmoCharacterEncoder, Classifier, Pooler, \
     SingleClassifier, PairClassifier, CNNEncoder, \
     NullPhraseLayer
 
-from .utils import assert_for_log, get_batch_utilization, get_batch_size
-from .preprocess import parse_task_list_arg, get_tasks
+from ..utils import assert_for_log, get_batch_utilization, get_batch_size
+from ..preprocess import parse_task_list_arg, get_tasks
 from .seq2seq_decoder import Seq2SeqDecoder
+from .conv import FConvEncoder
 
 
 # Elmo stuff
@@ -78,50 +79,44 @@ def build_model(args, vocab, pretrained_embs, tasks):
         assert_for_log(args.sent_enc in ['rnn', 'bilm'], "Only RNNLM supported!")
         if args.elmo:
             assert_for_log(args.elmo_chars_only, "LM with full ELMo not supported")
-        bilm = BiLMEncoder(d_emb, args.d_hid, args.d_hid, args.n_layers_enc)
-        sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
-                                       bilm, skip_embs=args.skip_embs,
-                                       dropout=args.dropout,
-                                       sep_embs_for_skip=args.sep_embs_for_skip,
-                                       cove_layer=cove_layer)
+        shared_enc = BiLMEncoder(d_emb, args.d_hid, args.d_hid, args.n_layers_enc)
         d_sent = 2 * args.d_hid
         log.info("Using BiLM architecture for shared encoder!")
-    elif args.sent_enc == 'bow':
-        sent_encoder = BoWSentEncoder(vocab, embedder)
-        log.info("Using BoW architecture for shared encoder!")
-        assert_for_log(not args.skip_embs, "Skip connection not currently supported with `bow` encoder.")
-        d_sent = d_emb
     elif args.sent_enc == 'rnn':
-        sent_rnn = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
-        sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
-                                       sent_rnn, skip_embs=args.skip_embs,
-                                       dropout=args.dropout, sep_embs_for_skip=args.sep_embs_for_skip,
-                                       cove_layer=cove_layer)
+        shared_enc = s2s_e.by_name('lstm').from_params(copy.deepcopy(rnn_params))
         d_sent = 2 * args.d_hid
         log.info("Using BiLSTM architecture for shared encoder!")
     elif args.sent_enc == 'transformer':
-        transformer = StackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
-        sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
-                                       transformer, dropout=args.dropout,
-                                       skip_embs=args.skip_embs,
-                                       cove_layer=cove_layer,
-                                       sep_embs_for_skip=args.sep_embs_for_skip)
+        shared_enc = StackedSelfAttentionEncoder.from_params(copy.deepcopy(tfm_params))
         log.info("Using Transformer architecture for shared encoder!")
     elif args.sent_enc == 'null':
         # Expose word representation layer (GloVe, ELMo, etc.) directly.
         assert_for_log(args.skip_embs, f"skip_embs must be set for "
                                         "'{args.sent_enc}' encoder")
-        phrase_layer = NullPhraseLayer(rnn_params['input_size'])
-        sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
-                                       phrase_layer, skip_embs=args.skip_embs,
-                                       dropout=args.dropout,
-                                       sep_embs_for_skip=args.sep_embs_for_skip,
-                                       cove_layer=cove_layer)
+        shared_enc = NullPhraseLayer(rnn_params['input_size'])
         d_sent = 0  # skip connection added below
         log.info("No shared encoder (just using word embeddings)!")
+    elif args.sent_enc == 'conv':
+        shared_enc = FConvEncoder(vocab, d_emb)
+        log.info("Using convolution architecture for shared encoder!")
+        d_sent = d_emb
+    elif args.sent_enc == 'bow':
+        pass
     else:
         assert_for_log(False, "No valid sentence encoder specified.")
 
+    if args.sent_enc == 'bow':
+        sent_encoder = BoWSentEncoder(vocab, embedder)
+        log.info("Using BoW architecture for shared encoder!")
+        assert_for_log(not args.skip_embs,
+                "Skip connection not currently supported with `bow` encoder.")
+        d_sent = d_emb
+    else:
+        sent_encoder = SentenceEncoder(vocab, embedder, args.n_layers_highway,
+                                       shared_enc, skip_embs=args.skip_embs,
+                                       dropout=args.dropout,
+                                       sep_embs_for_skip=args.sep_embs_for_skip,
+                                       cove_layer=cove_layer)
     d_sent += args.skip_embs * d_emb
 
     # Build model and classifiers
@@ -284,6 +279,7 @@ def build_embeddings(args, vocab, tasks, pretrained_embs=None):
         # Not used if self.elmo_chars_only = 1 (i.e. no elmo)
         loaded_classifiers = {"@pretrain@": 0}
         num_reps = 1
+
     if args.elmo:
         log.info("Loading ELMo from files:")
         log.info("ELMO_OPT_PATH = %s", ELMO_OPT_PATH)

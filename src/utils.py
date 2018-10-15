@@ -5,7 +5,7 @@ import copy
 import os
 import json
 import random
-import logging
+import logging as log
 import codecs
 import time
 from typing import Dict, List, Sequence, Optional, Union, Iterable
@@ -28,8 +28,9 @@ from allennlp.common.checks import ConfigurationError
 from . import utils
 from . import functionize
 
+import ipdb
 
-logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+logger = log.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 TOKENIZER = MosesTokenizer()
@@ -38,6 +39,54 @@ SOS_TOK, EOS_TOK = "<SOS>", "<EOS>"
 # Note: using the full 'detokenize()' method is not recommended, since it does
 # a poor job of adding correct whitespace. Use unescape_xml() only.
 _MOSES_DETOKENIZER = MosesDetokenizer()
+
+def stop_on_nan_hook(self, grad_input, grad_output):
+    if sum([torch.isnan(g).any().item() for g in grad_input]):
+        ipdb.set_trace()
+    if sum([torch.isnan(g).any().item() for g in grad_output]):
+        ipdb.set_trace()
+
+def print_grad_norm_hook(self, grad_input, grad_output):
+    """ Print norm of gradient of an intermediate module """
+    log.info("Inside %s backward" % self._get_name())
+    input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in grad_input if g is not None]))
+    output_norm= np.sqrt(np.sum([(g ** 2).sum().item() for g in grad_output if g is not None]))
+    log.info("grad_input norm: %.3f", input_norm)
+    log.info("grad_output norm: %.3f", output_norm)
+
+def print_norm_hook(self, input, output):
+    """ Print norm of input and output of an intermediate module """
+    log.info("Inside %s forward" % self._get_name())
+    input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in input if g is not None]))
+    output_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in output if g is not None]))
+    log.info("input norm: %.3f", input_norm)
+    log.info("output norm: %.3f", output_norm)
+
+def make_positions(tensor, padding_idx, left_pad, onnx_trace=False):
+    """Replace non-padding symbols with their position numbers.
+    Position numbers begin at padding_idx+1.
+    Padding symbols are ignored, but it is necessary to specify whether padding
+    is added on the left side (left_pad=True) or right side (left_pad=False).
+    """
+    if onnx_trace:
+        range_buf = torch._dim_arange(like=tensor, dim=1) + padding_idx + 1
+        mask = tensor.ne(padding_idx)
+        positions = range_buf.expand_as(tensor)
+        if left_pad:
+            positions = positions - mask.size(1) + mask.long().sum(dim=1).unsqueeze(1)
+        return positions * mask.long() + positions * (1 - mask.long())
+
+    max_pos = padding_idx + 1 + tensor.size(1)
+    if not hasattr(make_positions, 'range_buf'):
+        make_positions.range_buf = tensor.new()
+    make_positions.range_buf = make_positions.range_buf.type_as(tensor)
+    if make_positions.range_buf.numel() < max_pos:
+        torch.arange(padding_idx + 1, max_pos, out=make_positions.range_buf)
+    mask = tensor.ne(padding_idx)
+    positions = make_positions.range_buf[:tensor.size(1)].expand_as(tensor)
+    if left_pad:
+        positions = positions - mask.size(1) + mask.long().sum(dim=1).unsqueeze(1)
+    return tensor.clone().masked_scatter_(mask, positions[mask])
 
 def prepare_fforward(module):
     ''' Prepare two functional versions of module, train and eval versions '''
@@ -118,24 +167,24 @@ def load_model_state(model, state_path, gpu_id, skip_task_models=[], strict=True
                 assert_for_log(name in model_state,
                     "In strict mode and failed to find at least one parameter: " + name)
             elif (name not in model_state) and ((not skip_task_models) or ("_mdl" not in name)):
-                logging.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                logging.error("Parameter missing from checkpoint: " + name)
-                logging.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                log.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                log.error("Parameter missing from checkpoint: " + name)
+                log.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
     if skip_task_models:
         keys_to_skip = []
         for task in skip_task_models:
             new_keys_to_skip = [key for key in model_state if "%s_mdl" % task in key]
             if new_keys_to_skip:
-                logging.info("Skipping task-specific parameters for task: %s" % task)
+                log.info("Skipping task-specific parameters for task: %s" % task)
                 keys_to_skip += new_keys_to_skip
             else:
-                logging.info("Found no task-specific parameters to skip for task: %s" % task)
+                log.info("Found no task-specific parameters to skip for task: %s" % task)
         for key in keys_to_skip:
             del model_state[key]
 
     model.load_state_dict(model_state, strict=False)
-    logging.info("Loaded model state from %s", state_path)
+    log.info("Loaded model state from %s", state_path)
 
 
 def get_elmo_mixing_weights(text_field_embedder, task=None):
