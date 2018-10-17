@@ -22,7 +22,7 @@ from allennlp.training.learning_rate_schedulers import LearningRateScheduler  # 
 from allennlp.training.optimizers import Optimizer  # pylint: disable=import-error
 
 from .utils import device_mapping, assert_for_log, \
-        print_grad_norm_hook, print_norm_hook, stop_on_nan_hook
+        stop_on_nan_hook, template_print_norm_hook
 from .evaluate import evaluate
 from . import config
 from . import utils
@@ -31,6 +31,7 @@ from . import functionize
 import ipdb
 
 N_EXS_IN_MEMORY = 100000
+EPS = 1e-5
 
 def build_trainer_params(args, task_names):
     ''' In an act of not great code design, we wrote this helper function which
@@ -214,8 +215,8 @@ class MetaMultiTaskTrainer():
         self._task_infos = None
         self._metric_infos = None
 
-        self._log_interval = 10  # seconds
-        self._summary_interval = 10  # num batches between log to tensorboard
+        self._log_interval = .1  # seconds
+        self._summary_interval = .1  # num batches between log to tensorboard
         if self._cuda_device >= 0:
             self._model = self._model.cuda(self._cuda_device)
 
@@ -439,16 +440,34 @@ class MetaMultiTaskTrainer():
                                "If you don't want them, delete them or change your experiment name." %
                                self._serialization_dir)
 
-        #self._model.mnli5k_mdl.classifier.classifier[0].register_backward_hook(stop_on_nan_hook)
-        #self._model.snli5k_mdl.classifier.classifier[0].register_backward_hook(print_grad_norm_hook)
-        #self._model.snli5k_mdl.classifier.classifier[0].register_backward_hook(print_grad_norm_hook)
-        #self._model.snli5k_mdl.classifier.classifier[2].register_backward_hook(print_grad_norm_hook)
-        #self._model.snli5k_mdl.classifier.classifier[4].register_backward_hook(print_grad_norm_hook)
-        #self._model.snli5k_mdl.attn._matrix_attention.register_backward_hook(print_grad_norm_hook)
-        #self._model.snli5k_mdl.attn._modeling_layer._module.register_backward_hook(print_grad_norm_hook)
         #self._model.sent_encoder._phrase_layer.fc2.register_backward_hook(stop_on_nan_hook)
-        #self._model.sent_encoder._phrase_layer.fc2.register_backward_hook(print_grad_norm_hook)
-        #self._model.sent_encoder._phrase_layer.fc2.register_forward_hook(print_norm_hook)
+        #self._model.sent_encoder._phrase_layer.fc2.register_backward_hook(template_print_norm_hook("fc2 backward"))
+        #self._model.sent_encoder._phrase_layer.fc2.register_forward_hook(template_print_norm_hook("fc2 forward"))
+
+        ## dot product matrix attention
+        #self._model.snli5k_mdl.attn._matrix_attention.register_backward_hook(stop_on_nan_hook)
+        #self._model.snli5k_mdl.attn._matrix_attention.register_backward_hook(template_print_norm_hook("mat attn backward"))
+        #self._model.snli5k_mdl.attn._matrix_attention.register_forward_hook(template_print_norm_hook("mat attn forward"))
+
+        ## post attn LSTM
+        #self._model.snli5k_mdl.attn._modeling_layer._module.register_backward_hook(template_print_norm_hook("lstm attn backward"))
+        #self._model.snli5k_mdl.attn._modeling_layer._module.register_forward_hook(template_print_norm_hook("lstm attn fwd"))
+
+        ## projection + max pooling
+        #self._model.snli5k_mdl.pooler.register_backward_hook(template_print_norm_hook("pooler backward"))
+        #self._model.snli5k_mdl.pooler.register_forward_hook(template_print_norm_hook("pooler forward"))
+
+        ## MLP: input -> hidden
+        #self._model.snli5k_mdl.classifier.classifier[0].register_backward_hook(template_print_norm_hook("mlp lin1 bwd"))
+        #self._model.snli5k_mdl.classifier.classifier[0].register_forward_hook(template_print_norm_hook("mlp lin1 fwd"))
+
+        ## layer norm
+        #self._model.snli5k_mdl.classifier.classifier[2].register_backward_hook(template_print_norm_hook("mlp LN bwd"))
+        #self._model.snli5k_mdl.classifier.classifier[2].register_forward_hook(template_print_norm_hook("mlp LN fwd"))
+
+        ## MLP: hidden -> output
+        #self._model.snli5k_mdl.classifier.classifier[4].register_backward_hook(template_print_norm_hook("mlp lin2 bwd"))
+        #self._model.snli5k_mdl.classifier.classifier[4].register_forward_hook(template_print_norm_hook("mlp lin2 fwd"))
 
         sample_weights = self._setup_task_weighting(weighting_method, tasks)
         share = 1
@@ -456,8 +475,9 @@ class MetaMultiTaskTrainer():
         max_sim_grad_norm = self._max_sim_grad_norm
         cos_sim_approx = self._cos_sim_approx
         if share: # only optimize shared params
-            shared_params = [p for n, p in self._model.sent_encoder.named_parameters() if p.requires_grad and
-                    not ('_phrase_layer' in n and 'embed' in n)]
+            #shared_params = [p for n, p in self._model.sent_encoder.named_parameters() if p.requires_grad and
+            #        not ('_phrase_layer' in n and 'embed' in n)]
+            _shared_params = [copy.deepcopy(p) for n, p in self._model.named_parameters()]
         else:
             params = [p for p in self._model.parameters() if p.requires_grad]
 
@@ -491,25 +511,49 @@ class MetaMultiTaskTrainer():
                 # 1) Get a batch from each task
                 # 2) Get candidate parameters by simulating SGD update using the src batch
                 # 3) Calculate loss on the trg batch using the candidate parameters
+                if share: # only optimize shared params
+                    #shared_params = [p for n, p in self._model.sent_encoder.named_parameters() if p.requires_grad and
+                    #        not ('_phrase_layer' in n and 'embed' in n)]
+                    sent_enc_params = dict([("sent_encoder.%s" % n, 0) for n, p in self._model.sent_encoder.named_parameters()])
+                    shared_params = []
+                    for jj, (n, p) in  enumerate(self._model.named_parameters()):
+                        _shared_params[jj].data = p.data.clone()
+                        _shared_params[jj].grad = 0. * _shared_params[jj].grad if _shared_params[jj].grad is not None else None
+                        if n in sent_enc_params:
+                            if p.requires_grad and not ('_phrase_layer' in n and 'embed' in n):
+                                shared_params.append(_shared_params[jj])
+                else:
+                    params = [p for p in self._model.parameters() if p.requires_grad]
                 if slow_params_approx: # assume cand_params ~= params
                     trg_out = self._model(trg_task, trg_batch)
                     src_out = self._model(src_task, src_batch)
                     if share:
-                        trg_grads = autograd.grad(trg_out['loss'], shared_params, create_graph=True, allow_unused=True)
-                        src_grads = autograd.grad(src_out['loss'], shared_params, create_graph=True, allow_unused=True)
+                        #tloss = self._fwd_func_train(trg_batch, trg_task, False, params=_shared_params, name='_pair_sentence_forward')
+                        #sloss = self._fwd_func_train(src_batch, src_task, False, params=_shared_params, name='_pair_sentence_forward')
+                        tloss = self._fwd_func_train(trg_task, trg_batch, params=_shared_params)
+                        sloss = self._fwd_func_train(src_task, src_batch, params=_shared_params)
+                        trg_grads = autograd.grad(tloss['loss'], shared_params, create_graph=True, allow_unused=True)
+                        src_grads = autograd.grad(sloss['loss'], shared_params, create_graph=True, allow_unused=True)
                     else:
                         trg_grads = autograd.grad(trg_out['loss'], params, create_graph=True, allow_unused=True)
                         src_grads = autograd.grad(src_out['loss'], params, create_graph=True, allow_unused=True)
-                    trg_grads_flat = torch.cat([t.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
-                    src_grads_flat = torch.cat([s.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
+
+                    try:
+                        trg_grads_flat = torch.cat([t.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
+                        src_grads_flat = torch.cat([s.view(-1) for t, s in zip(trg_grads, src_grads) if s is not None and t is not None])
+                    except:
+                        ipdb.set_trace()
 
                     grad_prod = torch.dot(trg_grads_flat, src_grads_flat)
                     if only_pos_reg:
                         #grad_prod = grad_prod if grad_prod > 0 else 0
-                        grad_prod = grad_prod if grad_prod < 0 else 0
+                        #grad_prod = grad_prod if grad_prod < 0 else 0
+                        grad_prod = -(grad_prod ** 2)
+                    #ipdb.set_trace()
+                    log.info("GRAD PROD: %.3f", grad_prod)
 
-                    trg_norm = trg_grads_flat.norm()
-                    src_norm = src_grads_flat.norm()
+                    trg_norm = trg_grads_flat.norm() + EPS
+                    src_norm = src_grads_flat.norm() + EPS
                     if cos_sim_approx:
                         grad_prod = grad_prod / (trg_norm * src_norm)
                         cos_sim = grad_prod
@@ -526,10 +570,25 @@ class MetaMultiTaskTrainer():
                             #src_grads_flat = (max_sim_grad_norm / src_norm) * src_grads_flat
                             grad_prod = (max_sim_grad_norm / src_norm) * grad_prod
 
+                    grad_prod.backward()
+
                     gross_loss = src_out['loss'] + trg_out['loss']
+                    gross_loss.backward()
                     loss = gross_loss - (sim_lr * grad_prod)
                     trg_task_info['loss'] += trg_out['loss'].item()
                     src_task_info['loss'] += src_out['loss'].item()
+
+                    if share: # only optimize shared params
+                        #shared_params = [p for n, p in self._model.sent_encoder.named_parameters() if p.requires_grad and
+                        #        not ('_phrase_layer' in n and 'embed' in n)]
+                        jj = 0
+                        for ii, (n, p) in  enumerate(self._model.sent_encoder.named_parameters()):
+                            if p.requires_grad and not ('_phrase_layer' in n and 'embed' in n):
+                                p.grad -= sim_lr * shared_params[jj].grad
+                                jj = jj + 1
+                    else:
+                        params = [p for p in self._model.parameters() if p.requires_grad]
+
                 else:
                     src_param_clones = utils.clone_parameters(self._model, require_grad=True)
                     src_cand_params, sim_out = simulate_sgd(self._model, src_param_clones,
@@ -550,7 +609,7 @@ class MetaMultiTaskTrainer():
                     src_task_info['loss'] += src_out['loss'].item()
                     loss = trg_out['loss'] + src_out['loss']
 
-                loss.backward()
+                    loss.backward()
 
                 #sentenc11 = self._model.sent_encoder(src_batch['input1'], src_task)[0]
                 #sentenc12 = self._model.sent_encoder(src_batch['input2'], src_task)[0]
@@ -560,11 +619,11 @@ class MetaMultiTaskTrainer():
                 #log.info("SRC S2 NORM: %.3f", sentenc12.norm())
                 #log.info("TRG S1 NORM: %.3f", sentenc21.norm())
                 #log.info("TRG S2 NORM: %.3f", sentenc22.norm())
-                #if torch.isnan(loss).any():
-                #    ipdb.set_trace()
-                #grads = [p.grad for p in shared_params]
-                #if sum([torch.isnan(grad).any().item() for grad in grads]):
-                #    ipdb.set_trace()
+                if torch.isnan(loss).any():
+                    ipdb.set_trace()
+                grads = [p.grad for p in shared_params]
+                if sum([torch.isnan(grad).any().item() for grad in grads]):
+                    ipdb.set_trace()
 
                 assert_for_log(not torch.isnan(loss).any(), "NaNs in loss.")
 

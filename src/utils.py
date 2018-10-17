@@ -46,8 +46,30 @@ def stop_on_nan_hook(self, grad_input, grad_output):
     if sum([torch.isnan(g).any().item() for g in grad_output]):
         ipdb.set_trace()
 
+def template_print_norm_hook(message):
+    """ Closure for generating backwards hook with a particular message """
+
+    def filled_template(self, inp, output):
+        log.info("")
+        log.info("Inside %s" % message)
+
+        try:
+            input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in inp if g is not None]))
+        except TypeError:
+            input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in inp[0] if g is not None]))
+        log.info("input norm: %.3f", input_norm)
+
+        try:
+            output_norm= np.sqrt(np.sum([(g ** 2).sum().item() for g in output if g is not None]))
+        except TypeError:
+            output_norm= np.sqrt(np.sum([(g ** 2).sum().item() for g in output[0] if g is not None]))
+        log.info("output norm: %.3f", output_norm)
+
+    return filled_template
+
 def print_grad_norm_hook(self, grad_input, grad_output):
     """ Print norm of gradient of an intermediate module """
+    log.info("")
     log.info("Inside %s backward" % self._get_name())
     input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in grad_input if g is not None]))
     output_norm= np.sqrt(np.sum([(g ** 2).sum().item() for g in grad_output if g is not None]))
@@ -56,6 +78,7 @@ def print_grad_norm_hook(self, grad_input, grad_output):
 
 def print_norm_hook(self, input, output):
     """ Print norm of input and output of an intermediate module """
+    log.info("")
     log.info("Inside %s forward" % self._get_name())
     input_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in input if g is not None]))
     output_norm = np.sqrt(np.sum([(g ** 2).sum().item() for g in output if g is not None]))

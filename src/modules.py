@@ -144,8 +144,7 @@ class SentenceEncoder(Model):
             # Note that we need to also drop the last column so that CoVe returns
             # the right shape. If all inputs have <EOS> then this will be the
             # only thing clipped.
-            sent_cove_embs_raw = self._cove_layer(sent['words'][:,1:-1],
-                                                  sent_lens - 2)
+            sent_cove_embs_raw = self._cove_layer(sent['words'][:,1:-1], sent_lens - 2)
             pad_col = torch.zeros(sent_cove_embs_raw.size()[0], 1,
                                   sent_cove_embs_raw.size()[2],
                                   dtype=sent_cove_embs_raw.dtype,
@@ -200,6 +199,7 @@ class SentenceEncoder(Model):
         if isinstance(self._phrase_layer, BiLMEncoder):
             self._phrase_layer.reset_states()
 
+
 class BiLMEncoder(ElmoLstm):
     """Wrapper around BiLM to give it an interface to comply with SentEncoder
     See base class: ElmoLstm
@@ -209,6 +209,7 @@ class BiLMEncoder(ElmoLstm):
 
     def get_output_dim(self):
         return self.hidden_size * 2
+
 
 class BoWSentEncoder(Model):
     ''' Bag-of-words sentence encoder '''
@@ -396,6 +397,14 @@ class AttnPairEncoder(Model):
         # Shape: (batch_size, s1_length, encoding_dim)
         s1_s2_vectors = util.weighted_sum(s2, s1_s2_attn)
         s1_w_context = torch.cat([s1, s1_s2_vectors], 2)
+
+        log.info("")
+        log.info("attn s1 s2 norm: %.3f", s1_s2_attn.norm())
+        log.info("attn s1 s2 norm: %.3f", s2_s1_attn.norm())
+
+        log.info("")
+        log.info("post attn s1 norm: %.3f", s1_w_context.norm())
+        log.info("post attn s2 norm: %.3f", s2_w_context.norm())
 
         modeled_s1 = self._dropout(self._modeling_layer(s1_w_context, s1_mask))
         modeled_s2 = self._dropout(self._modeling_layer(s2_w_context, s2_mask))

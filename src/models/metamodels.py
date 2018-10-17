@@ -659,7 +659,7 @@ class MultiTaskModel(nn.Module):
             out['preds'] = predicted
         return out
 
-    def _positive_pair_sentence_forward(self, batch, task, predict):
+    def _positive_pair_sentence_forward(self, batch, task, predict, params=None):
         ''' forward function written specially for cases where we have only +ve pairs in input data
             -ve pairs are created by rotating either sent1 or sent2.
             Ex: [1,2,3,4] after rotation by 2 positions [3,4,1,2]
