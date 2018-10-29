@@ -48,8 +48,9 @@ def _make_functional(module, params_box, params_offset, trg_func='forward', pare
                 setattr(self, name, func_ffunc)
 
         if hasattr(module, 'reset_states'):
-            _, func_ffunc = _make_functional(module, params_box, child_params_offset, 'reset_states', self)
-            setattr(self, name, func_ffunc)
+            ipdb.set_trace()
+            , func_ffunc = _make_functional(module, params_box, child_params_offset, 'reset_states', self)
+            setattr(self, 'reset_states', func_ffunc)
 
         child_params_offset = params_offset + num_params
         for name, child in module.named_children():
