@@ -216,4 +216,3 @@ You should see the model start training, and achieve an accuracy of > 70% on SST
 
 Post an issue here on GitHub if you have any problems, and create a pull request if you make any improvements (substantial or cosmetic) to the code that you're willing to share.
 
-Test test test
