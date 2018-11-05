@@ -50,6 +50,7 @@ RUN pip install msgpack
 # TODO: pin this to a specific version!
 RUN pip install --upgrade tensorflow-gpu tensorflow-hub
 
+
 # Install PyTorch 0.4
 RUN conda install pytorch=0.4.0 torchvision=0.2.1 cuda90 -c pytorch
 
@@ -69,6 +70,16 @@ RUN python -m spacy download en
 RUN python -m nltk.downloader -d /usr/share/nltk_data \
   perluniprops nonbreaking_prefixes punkt
 
+
+RUN pip install -U mxnet-cu90mkl gluonnlp 
+
+RUN git clone https://github.com/salesforce/cove.git \
+  && cd cove \
+  && pip install -r requirements.txt \
+  && python setup.py develop
+
+
+
 # Create local dir for NFS mount.
 RUN mkdir -p /nfs/jsalt
 # Set environment vars based on gcp/config/jsalt_paths.1.2.sh
@@ -82,5 +93,6 @@ ENV PATH_TO_COVE "$JSALT_SHARE_DIR/cove"
 ENV ELMO_SRC_DIR "$JSALT_SHARE_DIR/elmo"
 
 # Set these manually with -e or via Kuberentes config YAML.
-# ENV NFS_PROJECT_PREFIX "/nfs/jsalt/exp/docker"
-# ENV JIANT_PROJECT_PREFIX "$NFS_PROJECT_PREFIX"
+ENV NFS_PROJECT_PREFIX "/nfs/jsalt/exp/docker"
+ENV JIANT_PROJECT_PREFIX "$NFS_PROJECT_PREFIX"
+

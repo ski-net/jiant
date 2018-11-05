@@ -1415,7 +1415,7 @@ class MultiNLIDiagnosticTask(PairClassificationTask):
         diag_data_dic = load_diagnostic_tsv(
             os.path.join(
                 path,
-                'diagnostic-full.tsv'),
+                'diagnostic.tsv'),
             max_seq_len,
             s1_idx=5,
             s2_idx=6,
